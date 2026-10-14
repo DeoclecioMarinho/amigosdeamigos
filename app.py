@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import logging
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -22,15 +23,15 @@ except ImportError:
     st.error('Não foi possível carregar os módulos da aplicação. Confirma os ficheiros e requirements.txt no GitHub.')
     st.stop()
 
-if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.1'
-        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.1'):
+if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.2'
+        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.2'):
     st.error('Ficheiros de versões diferentes detetados: atualiza app.py, database.py e finance.py em conjunto no mesmo repositório.')
     st.info('Não apagues a base de dados nem os registos de pagamentos. Substitui apenas o código e reinicia a aplicação.')
     st.stop()
 
 from database import (
     add_expense, add_income, add_member, add_payment, change_member, csv_export,
-    delete_record, get_rows, get_year_settings, import_photo_payments, init_db,
+    delete_record, get_rows, get_year_settings, import_photo_payments, init_db, DatabaseSchemaError,
     make_engine, members, payments, expenses, incomes, waivers, update_year,
     attendance, add_attendance, pay_attendance_fine, remove_attendance, session_times,
     photo_marks, resolve_photo_mark, set_member_month_status, update_payment,
@@ -82,16 +83,32 @@ def engine_for(url):
 
 try:
     engine = engine_for(secret('DATABASE_URL'))
-except Exception as ex:
-    st.error('Não foi possível ligar à base de dados. Confirma a configuração DATABASE_URL.')
-    st.code(str(ex))
+except DatabaseSchemaError as ex:
+    logging.exception('Falha de compatibilidade da base de dados')
+    st.error('A estrutura da base de dados tem colunas essenciais incompatíveis com esta versão.')
+    st.info(str(ex))
+    st.info('Os dados não foram apagados. Solicita a correção da estrutura antes de continuar.')
+    st.stop()
+except Exception:
+    logging.exception('Falha de ligação ou inicialização da base de dados')
+    st.error('Não foi possível abrir ou atualizar a base de dados. Verifica os logs do Streamlit Cloud.')
+    st.caption('Se a aplicação estiver online, confirma DATABASE_URL nos Secrets e a disponibilidade do serviço PostgreSQL.')
     st.stop()
 
 
 def load_data():
-    return (get_rows(engine, members), get_rows(engine, payments),
-            get_rows(engine, expenses), get_rows(engine, incomes), get_rows(engine, waivers),
-            get_rows(engine, attendance), get_rows(engine, photo_marks), get_rows(engine, rent_payments))
+    tables = (members, payments, expenses, incomes, waivers, attendance, photo_marks, rent_payments)
+    result = []
+    for table in tables:
+        try:
+            result.append(get_rows(engine, table))
+        except Exception:
+            logging.exception('Falha na consulta da tabela: %s', table.name)
+            st.error(f'Erro ao consultar os registos de «{table.name}».')
+            st.info('A consulta falhou, mas nenhum pagamento foi apagado. '
+                    'Abre Manage app → Logs e consulta a última exceção completa.')
+            st.stop()
+    return tuple(result)
 
 
 def reload_ok(message):

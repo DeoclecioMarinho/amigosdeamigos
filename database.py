@@ -1,7 +1,7 @@
 """Persistência multi-ano: SQLite local ou PostgreSQL gerido, via SQLAlchemy."""
 from __future__ import annotations
 
-APP_COMPAT_VERSION = '4.1'
+APP_COMPAT_VERSION = '4.2'
 
 from datetime import date, datetime, time
 import csv
@@ -11,7 +11,7 @@ import os
 import pandas as pd
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, ForeignKey, Integer, MetaData, String, Time,
-    Table, UniqueConstraint, create_engine, delete, insert, select, update,
+    Table, UniqueConstraint, create_engine, delete, insert, inspect, select, text, update,
 )
 
 BASE = Path(__file__).parent
@@ -165,8 +165,86 @@ def make_engine(db_url: str | None = None):
     return create_engine(db_url, **kwargs)
 
 
-def init_db(engine):
+# Atualizações compatíveis com as tabelas das versões anteriores.
+# Nunca apaga tabelas nem registos. As colunas essenciais ausentes não são
+# inventadas, porque isso corromperia o histórico de pagamentos.
+SAFE_NEW_COLUMNS = {
+    'members': {
+        'end_year': 'INTEGER', 'end_month': 'INTEGER',
+        'needs_review': 'BOOLEAN NOT NULL DEFAULT 0',
+    },
+    'year_settings': {
+        'late_fee': 'INTEGER NOT NULL DEFAULT 500',
+        'due_day': 'INTEGER NOT NULL DEFAULT 10',
+        'verified': 'BOOLEAN NOT NULL DEFAULT 0',
+    },
+    'payments': {
+        'paid_on': 'DATE', 'origin': "VARCHAR(40) NOT NULL DEFAULT 'manual'",
+        'note': "VARCHAR(250) NOT NULL DEFAULT ''", 'created_at': 'TIMESTAMP',
+    },
+    'expenses': {
+        'description': "VARCHAR(250) NOT NULL DEFAULT ''", 'created_at': 'TIMESTAMP',
+    },
+    'other_incomes': {
+        'description': "VARCHAR(250) NOT NULL DEFAULT ''", 'created_at': 'TIMESTAMP',
+    },
+    'penalty_waivers': {'reason': "VARCHAR(250) NOT NULL DEFAULT ''"},
+    'attendance': {
+        'arrived_at': 'TIME', 'fine_due': 'INTEGER NOT NULL DEFAULT 0',
+        'fine_paid': 'INTEGER NOT NULL DEFAULT 0', 'paid_on': 'DATE',
+        'note': "VARCHAR(250) NOT NULL DEFAULT ''", 'created_at': 'TIMESTAMP',
+    },
+    'photo_marks': {'status': "VARCHAR(16) NOT NULL DEFAULT 'pendente'"},
+    'rent_plans': {'note': "VARCHAR(250) NOT NULL DEFAULT ''"},
+    'rent_payments': {'note': "VARCHAR(250) NOT NULL DEFAULT ''", 'created_at': 'TIMESTAMP'},
+    'audit_log': {
+        'changed_at': 'TIMESTAMP', 'actor': "VARCHAR(100) NOT NULL DEFAULT 'financeiro'",
+        'details': "VARCHAR(500) NOT NULL DEFAULT ''",
+    },
+}
+
+
+class DatabaseSchemaError(RuntimeError):
+    """Existe uma tabela antiga incompatível que não pode ser alterada com segurança."""
+
+
+def prepare_schema(engine):
+    """Cria tabelas novas e acrescenta apenas colunas seguras em tabelas antigas.
+
+    create_all() por si só não migra tabelas já existentes. As alterações são
+    aditivas, transacionais quando suportado pelo motor, e não tocam em valores
+    guardados. Colunas com data de registo podem ficar NULL em dados antigos.
+    """
     MD.create_all(engine)
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in MD.sorted_tables:
+            name = table.name
+            if not inspector.has_table(name):
+                raise DatabaseSchemaError(f'Tabela em falta: {name}')
+            actual = {col['name'] for col in inspector.get_columns(name)}
+            expected = {col.name for col in table.columns}
+            missing = expected - actual
+            essential = missing - set(SAFE_NEW_COLUMNS.get(name, {}))
+            if essential:
+                raise DatabaseSchemaError(
+                    f'Tabela {name}: colunas essenciais em falta: {", ".join(sorted(essential))}. '
+                    'É necessária uma migração manual sem perda de dados.'
+                )
+            for column in sorted(missing):
+                sql_type = SAFE_NEW_COLUMNS[name][column]
+                # Nomes das tabelas/colunas e expressões vêm apenas do código,
+                # nunca de entrada do utilizador.
+                conn.execute(text(f'ALTER TABLE "{name}" ADD COLUMN "{column}" {sql_type}'))
+            # Algumas versões antigas poderão ter datas de auditoria em falta.
+            if 'created_at' in missing:
+                conn.execute(text(f'UPDATE "{name}" SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL'))
+            if 'changed_at' in missing:
+                conn.execute(text(f'UPDATE "{name}" SET changed_at = CURRENT_TIMESTAMP WHERE changed_at IS NULL'))
+
+
+def init_db(engine):
+    prepare_schema(engine)
     with engine.begin() as conn:
         if not conn.execute(select(members.c.id).limit(1)).first():
             conn.execute(insert(members), [
