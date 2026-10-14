@@ -23,8 +23,8 @@ except ImportError:
     st.error('Não foi possível carregar os módulos da aplicação. Confirma os ficheiros e requirements.txt no GitHub.')
     st.stop()
 
-if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.2'
-        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.2'):
+if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.3'
+        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.3'):
     st.error('Ficheiros de versões diferentes detetados: atualiza app.py, database.py e finance.py em conjunto no mesmo repositório.')
     st.info('Não apagues a base de dados nem os registos de pagamentos. Substitui apenas o código e reinicia a aplicação.')
     st.stop()
@@ -36,7 +36,7 @@ from database import (
     attendance, add_attendance, pay_attendance_fine, remove_attendance, session_times,
     photo_marks, resolve_photo_mark, set_member_month_status, update_payment,
     rent_payments, rent_plans, audit_log, rent_grid, get_rent_plan, set_rent_plan,
-    add_rent_payment,
+    add_rent_payment, read_photo_marks_safely,
 )
 from finance import (
     EXPENSE_CATEGORIES, INCOME_CATEGORIES, MONTHS, MONTH_ABBR,
@@ -97,18 +97,26 @@ except Exception:
 
 
 def load_data():
-    tables = (members, payments, expenses, incomes, waivers, attendance, photo_marks, rent_payments)
+    # photo_marks guarda apenas marcas AINDA NÃO VALIDADAS das fotografias.
+    # Mantemos o dashboard público se esta tabela auxiliar estiver inacessível.
     result = []
-    for table in tables:
+    for table in (members, payments, expenses, incomes, waivers, attendance):
         try:
             result.append(get_rows(engine, table))
         except Exception:
-            logging.exception('Falha na consulta da tabela: %s', table.name)
-            st.error(f'Erro ao consultar os registos de «{table.name}».')
-            st.info('A consulta falhou, mas nenhum pagamento foi apagado. '
-                    'Abre Manage app → Logs e consulta a última exceção completa.')
+            logging.exception('Falha na consulta financeira essencial: %s', table.name)
+            st.error(f'Não foi possível consultar «{table.name}». As contas não podem ser apresentadas com segurança.')
+            st.info('Consulta Manage app → Logs. Nenhum registo foi eliminado.')
             st.stop()
-    return tuple(result)
+    marks, available, recovered = read_photo_marks_safely(engine)
+    result.append(marks)
+    try:
+        result.append(get_rows(engine, rent_payments))
+    except Exception:
+        logging.exception('Falha na consulta financeira essencial: rent_payments')
+        st.error('Não foi possível consultar o aluguer do campo. As contas não podem ser apresentadas com segurança.')
+        st.stop()
+    return (*result, available, recovered)
 
 
 def reload_ok(message):
@@ -121,7 +129,15 @@ if 'auth' not in st.session_state:
 if 'notice' in st.session_state:
     st.success(st.session_state.pop('notice'))
 
-member_rows, pay_rows, expense_rows, income_rows, waive_rows, training_rows, photo_rows, rent_rows = load_data()
+member_rows, pay_rows, expense_rows, income_rows, waive_rows, training_rows, photo_rows, rent_rows, photo_ok, photo_repaired = load_data()
+if not photo_ok:
+    st.error('⚠️ As marcas das fotografias de 2026 estão temporariamente inacessíveis. '
+             'As mensalidades confirmadas, multas e despesas continuam a ser consultadas normalmente. '
+             'A conferência das fotografias fica bloqueada para evitar inconsistências.')
+    st.caption('Para resolver a tabela photo_marks, o financeiro deve consultar o erro SQL completo em Manage app → Logs.')
+elif photo_repaired:
+    st.warning('O histórico provisório da fotografia foi reconstruído sem apagar pagamentos. '
+               'O financeiro deve voltar a conferir as marcas de 2026.')
 today = date.today()
 first_year = min([2026] + [int(m['start_year']) for m in member_rows] + [int(p['year']) for p in pay_rows]
                  + [r['expense_on'].year for r in expense_rows] + [r['received_on'].year for r in income_rows])
@@ -188,7 +204,10 @@ with head_photo:
         st.caption('Imagem do grupo não encontrada. Verifica a pasta assets.')
 
 if not cfg['verified']:
-    st.warning(f'**Histórico de {view_year} ainda por confirmar.** As marcas identificadas na fotografia de 2026 aparecem como ✓? e não entram no saldo até o financeiro confirmar o recebimento.')
+    if photo_ok:
+        st.warning(f'**Histórico de {view_year} ainda por confirmar.** As marcas identificadas na fotografia de 2026 aparecem como ✓? e não entram no saldo até o financeiro confirmar o recebimento.')
+    else:
+        st.warning(f'**Histórico de {view_year} por confirmar.** A leitura das marcas da fotografia não está disponível neste momento.')
 
 # Indicadores de caixa globais e anuais: saldo é caixa, dívida não conta como dinheiro recebido.
 a, b, c, d, e = st.columns(5)
@@ -621,66 +640,70 @@ if st.session_state.auth:
         st.caption('A data de entrada/saída determina quais os meses com mensalidade devida. Os pagamentos antigos permanecem guardados.')
 
     with management[4]:
-        st.subheader('Fotografias do registo de 2026')
-        st.warning('Esta transcrição é uma **proposta**. Nem todas as grafias e cruzes são nítidas. Nenhum X significa falta de pagamento comprovada, e as datas dos pagamentos assinalados não são conhecidas.')
-        example_path = Path(__file__).parent / 'historico_foto_2026_para_validar.csv'
-        if example_path.exists():
-            st.download_button('Descarregar proposta de transcrição (CSV)', example_path.read_bytes(),
-                               file_name=example_path.name, mime='text/csv')
-        uploaded = st.file_uploader('Carregar CSV da proposta ou ficheiro corrigido', type=['csv'], key='historical_upload')
-        if uploaded is not None:
-            try:
-                candidate = pd.read_csv(uploaded, encoding='utf-8-sig', sep=None, engine='python').fillna('')
-                must_have = {'nome','mes','valor'}
-                if not must_have.issubset(candidate.columns):
-                    st.error('O CSV deve conter as colunas nome, mes e valor.')
-                else:
-                    candidate.insert(0, 'importar', True)
-                    st.caption('Podes desmarcar as linhas que não conseguiste verificar. A operação ignora duplicados anteriormente importados da fotografia.')
-                    edited = st.data_editor(candidate, hide_index=True, use_container_width=True, num_rows='fixed', height=400,
-                                            column_config={'importar': st.column_config.CheckboxColumn('Confirmado?'),
-                                                           'nome': st.column_config.TextColumn('Nome'),
-                                                           'mes': st.column_config.NumberColumn('Mês'),
-                                                           'valor': st.column_config.NumberColumn('XOF')})
-                    approve = st.checkbox('Conferi as marcas com os registos originais; autorizo que os selecionados entrem nas contas.', key='confirm_hist')
-                    if st.button('Importar pagamentos selecionados de 2026', type='primary', disabled=not approve):
-                        chosen = edited[edited['importar']].to_dict('records')
-                        added, skipped = import_photo_payments(engine, chosen, year=2026)
-                        reload_ok(f'Fotografia: {added} pagamentos importados, {skipped} ignorados/duplicados. Confirma também os nomes e as mensalidades em falta.')
-            except Exception as exc:
-                st.error(f'Não foi possível interpretar o CSV: {exc}')
-        pending_marks = [r for r in photo_rows if r['year'] == 2026 and r['status'] == 'pendente']
-        st.subheader(f'Marcas fotografadas por confirmar: {len(pending_marks)}')
-        if pending_marks:
-            with st.form('approve_photo_marks'):
-                names = {m['id']:m['name'] for m in member_rows}
-                candidates = pd.DataFrame([{'Confirmar': False, 'ID': x['id'], 'Associado': names.get(x['member_id'], '—'),
-                                             'Mês': MONTHS[x['month']-1], 'Valor (XOF)': x['amount']}
-                                            for x in sorted(pending_marks, key=lambda r:(names.get(r['member_id'],''), r['month']))])
-                reviewed = st.data_editor(candidates, hide_index=True, use_container_width=True,
-                                          disabled=['ID','Associado','Mês','Valor (XOF)'],
-                                          column_config={'Confirmar':st.column_config.CheckboxColumn('Conferido?')})
-                confirmed_photo = st.checkbox('Conferi os registos selecionados e confirmo que estes pagamentos foram recebidos.')
-                if st.form_submit_button('Confirmar mensalidades selecionadas', type='primary'):
-                    picked = reviewed[reviewed['Confirmar']]
-                    if not confirmed_photo or picked.empty:
-                        st.error('Seleciona os pagamentos e confirma a conferência.')
+        if not photo_ok:
+            st.error('Conferência suspensa: a tabela photo_marks não pôde ser consultada. Os movimentos financeiros estão preservados.')
+            st.info('Consulta os logs e corrige a base de dados antes de validar as marcas antigas.')
+        else:
+            st.subheader('Fotografias do registo de 2026')
+            st.warning('Esta transcrição é uma **proposta**. Nem todas as grafias e cruzes são nítidas. Nenhum X significa falta de pagamento comprovada, e as datas dos pagamentos assinalados não são conhecidas.')
+            example_path = Path(__file__).parent / 'historico_foto_2026_para_validar.csv'
+            if example_path.exists():
+                st.download_button('Descarregar proposta de transcrição (CSV)', example_path.read_bytes(),
+                                   file_name=example_path.name, mime='text/csv')
+            uploaded = st.file_uploader('Carregar CSV da proposta ou ficheiro corrigido', type=['csv'], key='historical_upload')
+            if uploaded is not None:
+                try:
+                    candidate = pd.read_csv(uploaded, encoding='utf-8-sig', sep=None, engine='python').fillna('')
+                    must_have = {'nome','mes','valor'}
+                    if not must_have.issubset(candidate.columns):
+                        st.error('O CSV deve conter as colunas nome, mes e valor.')
                     else:
-                        for mark_id in picked['ID']:
-                            entry = next(p for p in pending_marks if p['id']==mark_id)
-                            resolve_photo_mark(engine, entry['member_id'], 2026, entry['month'], True)
-                        reload_ok(f'{len(picked)} mensalidades conferidas; recebimentos integrados na tesouraria.')
-        if pending_marks:
-            st.markdown('**Rejeitar uma marca errada da fotografia**')
-            reject_map = {r['id']:r for r in pending_marks}
-            to_reject = st.selectbox('Marca a rejeitar', list(reject_map),
-                format_func=lambda k: f"{names.get(reject_map[k]['member_id'], '—')} · {MONTHS[reject_map[k]['month']-1]}", key='reject_photo')
-            check_reject = st.checkbox('Confirmei que esta marca não representa uma mensalidade paga', key='check_reject')
-            if st.button('Rejeitar apenas esta marca', disabled=not check_reject):
-                r = reject_map[to_reject]
-                resolve_photo_mark(engine, r['member_id'], 2026, r['month'], False)
-                reload_ok('Marca rejeitada; permanece no histórico sem afetar o saldo de caixa.')
-        st.info('As marcas ✓? estão disponíveis na grelha pública, mas NÃO são ainda dinheiro registado. O financeiro confirma as corretas ou rejeita individualmente as erradas.')
+                        candidate.insert(0, 'importar', True)
+                        st.caption('Podes desmarcar as linhas que não conseguiste verificar. A operação ignora duplicados anteriormente importados da fotografia.')
+                        edited = st.data_editor(candidate, hide_index=True, use_container_width=True, num_rows='fixed', height=400,
+                                                column_config={'importar': st.column_config.CheckboxColumn('Confirmado?'),
+                                                               'nome': st.column_config.TextColumn('Nome'),
+                                                               'mes': st.column_config.NumberColumn('Mês'),
+                                                               'valor': st.column_config.NumberColumn('XOF')})
+                        approve = st.checkbox('Conferi as marcas com os registos originais; autorizo que os selecionados entrem nas contas.', key='confirm_hist')
+                        if st.button('Importar pagamentos selecionados de 2026', type='primary', disabled=not approve):
+                            chosen = edited[edited['importar']].to_dict('records')
+                            added, skipped = import_photo_payments(engine, chosen, year=2026)
+                            reload_ok(f'Fotografia: {added} pagamentos importados, {skipped} ignorados/duplicados. Confirma também os nomes e as mensalidades em falta.')
+                except Exception as exc:
+                    st.error(f'Não foi possível interpretar o CSV: {exc}')
+            pending_marks = [r for r in photo_rows if r['year'] == 2026 and r['status'] == 'pendente']
+            st.subheader(f'Marcas fotografadas por confirmar: {len(pending_marks)}')
+            if pending_marks:
+                with st.form('approve_photo_marks'):
+                    names = {m['id']:m['name'] for m in member_rows}
+                    candidates = pd.DataFrame([{'Confirmar': False, 'ID': x['id'], 'Associado': names.get(x['member_id'], '—'),
+                                                 'Mês': MONTHS[x['month']-1], 'Valor (XOF)': x['amount']}
+                                                for x in sorted(pending_marks, key=lambda r:(names.get(r['member_id'],''), r['month']))])
+                    reviewed = st.data_editor(candidates, hide_index=True, use_container_width=True,
+                                              disabled=['ID','Associado','Mês','Valor (XOF)'],
+                                              column_config={'Confirmar':st.column_config.CheckboxColumn('Conferido?')})
+                    confirmed_photo = st.checkbox('Conferi os registos selecionados e confirmo que estes pagamentos foram recebidos.')
+                    if st.form_submit_button('Confirmar mensalidades selecionadas', type='primary'):
+                        picked = reviewed[reviewed['Confirmar']]
+                        if not confirmed_photo or picked.empty:
+                            st.error('Seleciona os pagamentos e confirma a conferência.')
+                        else:
+                            for mark_id in picked['ID']:
+                                entry = next(p for p in pending_marks if p['id']==mark_id)
+                                resolve_photo_mark(engine, entry['member_id'], 2026, entry['month'], True)
+                            reload_ok(f'{len(picked)} mensalidades conferidas; recebimentos integrados na tesouraria.')
+            if pending_marks:
+                st.markdown('**Rejeitar uma marca errada da fotografia**')
+                reject_map = {r['id']:r for r in pending_marks}
+                to_reject = st.selectbox('Marca a rejeitar', list(reject_map),
+                    format_func=lambda k: f"{names.get(reject_map[k]['member_id'], '—')} · {MONTHS[reject_map[k]['month']-1]}", key='reject_photo')
+                check_reject = st.checkbox('Confirmei que esta marca não representa uma mensalidade paga', key='check_reject')
+                if st.button('Rejeitar apenas esta marca', disabled=not check_reject):
+                    r = reject_map[to_reject]
+                    resolve_photo_mark(engine, r['member_id'], 2026, r['month'], False)
+                    reload_ok('Marca rejeitada; permanece no histórico sem afetar o saldo de caixa.')
+            st.info('As marcas ✓? estão disponíveis na grelha pública, mas NÃO são ainda dinheiro registado. O financeiro confirma as corretas ou rejeita individualmente as erradas.')
 
     with management[5]:
         st.subheader(f'Regras para {view_year}')
@@ -695,7 +718,10 @@ if st.session_state.auth:
                 reload_ok(f'Regras financeiras de {view_year} guardadas.')
         st.warning('Alterar a mensalidade recalcula as quotas em dívida do ano escolhido. A multa por atraso só afeta novos registos de treino; os já registados mantêm o valor histórico.')
         st.subheader('Exportação / cópia dos dados')
-        for typ in ['membros','pagamentos','despesas','outras_receitas','treinos_multas','marcas_foto','aluguer','plano_aluguer','auditoria']:
+        export_types = ['membros','pagamentos','despesas','outras_receitas','treinos_multas','aluguer','plano_aluguer','auditoria']
+        if photo_ok:
+            export_types.append('marcas_foto')
+        for typ in export_types:
             st.download_button(f'Descarregar {typ.replace("_", " ")} (CSV)', csv_export(engine, typ),
                                file_name=f'{typ}_amigos.csv', mime='text/csv', key=f'csv_{typ}')
         st.caption('Estes ficheiros são cópias dos dados; é aconselhável descarregá-los periodicamente.')

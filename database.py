@@ -1,14 +1,16 @@
 """Persistência multi-ano: SQLite local ou PostgreSQL gerido, via SQLAlchemy."""
 from __future__ import annotations
 
-APP_COMPAT_VERSION = '4.2'
+APP_COMPAT_VERSION = '4.3'
 
 from datetime import date, datetime, time
 import csv
 from pathlib import Path
 import os
+import logging
 
 import pandas as pd
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, ForeignKey, Integer, MetaData, String, Time,
     Table, UniqueConstraint, create_engine, delete, insert, inspect, select, text, update,
@@ -278,6 +280,39 @@ def init_db(engine):
 def get_rows(engine, table):
     with engine.connect() as conn:
         return [dict(row) for row in conn.execute(select(table)).mappings()]
+
+
+def read_photo_marks_safely(engine):
+    """Lê as marcas provisórias sem comprometer os movimentos financeiros.
+
+    Se a tabela / coluna não existir, volta a aplicar as migrações aditivas e
+    tenta ler novamente. Noutras falhas SQL, não tenta DDL nem apaga nada:
+    a funcionalidade de conferência fica indisponível até haver diagnóstico.
+    Devolve (marcas, disponivel, reparada).
+    """
+    try:
+        return get_rows(engine, photo_marks), True, False
+    except (OperationalError, ProgrammingError) as err:
+        logging.exception('Consulta photo_marks falhou: %s', type(err).__name__)
+        reason = str(getattr(err, 'orig', err)).lower()
+        # Apenas erros de tabela/coluna ausente permitem uma tentativa segura.
+        recoverable = (
+            'no such table' in reason or 'no such column' in reason
+            or ('does not exist' in reason and ('photo_marks' in reason or 'column' in reason))
+            or 'undefinedtable' in reason or 'undefinedcolumn' in reason
+        )
+        if recoverable:
+            try:
+                init_db(engine)  # ADD COLUMN / CREATE TABLE sem DROP ou DELETE.
+                rows = get_rows(engine, photo_marks)
+                logging.warning('photo_marks recuperada através de migração aditiva')
+                return rows, True, True
+            except Exception:
+                logging.exception('Não foi possível recuperar photo_marks sem intervenção')
+        return [], False, False
+    except Exception:
+        logging.exception('Erro inesperado ao consultar photo_marks')
+        return [], False, False
 
 
 def get_year_settings(engine, year):

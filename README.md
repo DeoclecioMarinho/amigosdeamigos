@@ -1,64 +1,58 @@
-# Amigos de Amigos — Streamlit v4.2 (correção de base de dados)
+# Amigos de Amigos — Streamlit v4.3 (isolamento e recuperação de photo_marks)
 
-Esta versão corrige a causa possível de `sqlalchemy.exc.OperationalError` após atualizar
-uma aplicação antiga: `create_all()` criava tabelas mas **não acrescentava colunas
-novas nas tabelas existentes**. Agora verifica a estrutura e aplica apenas alterações
-**aditivas e compatíveis**; não elimina nem substitui tabelas ou registos.
+## O que corrige
 
-**Atenção:** O texto fornecido do traceback não contém a última linha com o erro SQL
-original (`no such column`, `no such table`, `database is locked`, etc.). Assim,
-não é possível confirmar exatamente o motivo sem essa linha nos logs.
+A versão anterior interrompia toda a aplicação quando a consulta da tabela
+`photo_marks` falhava. Esta tabela contém **somente as marcas provisórias
+transcritas das fotografias**, nunca a contabilidade efetiva.
 
-## Atualizar a aplicação publicada
+A versão 4.3:
 
-1. Se já tens pagamentos reais numa base PostgreSQL, faz primeiro uma cópia de segurança.
-2. Extrai este ZIP e atualiza **em conjunto** os ficheiros `app.py`, `database.py`,
-   `finance.py`, `requirements.txt`, o CSV histórico e a pasta `assets` na raiz do repositório.
-3. Faz commit para o ramo usado pela aplicação no Streamlit Cloud.
-4. No Streamlit Cloud, abre **Manage app → Reboot app** se necessário.
-5. Se o erro permanecer, consulta **Manage app → Logs**. O novo código identifica no
-   log a tabela cuja consulta falhou. Partilha a última linha do erro SQL sem qualquer
-   senha, URL de ligação, token ou dado pessoal.
+1. Em falhas que indiquem tabela/coluna ausente, tenta automaticamente executar
+   uma migração aditiva e recupera o acesso sem DROP/DELETE.
+2. Se o acesso não puder ser corrigido com segurança, o **dashboard continua** a
+   apresentar mensalidades realmente registadas, multas, aluguer e despesas;
+   mostra um aviso e bloqueia a validação de marcas da fotografia e a exportação
+   dessa tabela até ser resolvida.
+3. Mantém os dados persistentes e os módulos sincronizados (`APP_COMPAT_VERSION=4.3`).
+4. Guarda no log a exceção SQL original para diagnóstico. Não assume que
+   conhece a causa sem o erro completo dos logs.
 
-Não apagues o ficheiro da base de dados nem elimines tabelas para resolver o erro.
+**Atenção:** Se `photo_marks` for recriada a partir do CSV porque desapareceu,
+precisa de nova validação. As marcas não são receitas até serem confirmadas.
 
-## Persistência e segurança
+## Como atualizar
 
-Para uso em produção, configura `DATABASE_URL` para uma base PostgreSQL persistente.
-O ficheiro SQLite local no Streamlit Community Cloud pode desaparecer no reinício,
-mesmo quando a estrutura está correta.
+1. Faz cópia de segurança dos dados financeiros se estiveres a usar PostgreSQL.
+2. Extrai o ZIP e atualiza todos os ficheiros `app.py`, `database.py`,
+   `finance.py`, `requirements.txt`, a pasta `assets` e o CSV histórico no GitHub.
+3. Faz commit e reinicia a app em Streamlit Cloud.
+4. Se aparecer aviso de erro de `photo_marks`, abre **Manage app → Logs** e copia
+   as linhas da exceção que indiquem `no such column`, `no such table`,
+   `permission denied`, `database is locked` ou outro erro específico.
+   Não partilhes URLs com passwords, tokens ou `DATABASE_URL`.
 
-A conta do financeiro é configurada em **Manage app → Settings → Secrets**, por exemplo:
+O ficheiro SQLite em Streamlit Community Cloud não garante persistência em
+reinícios. Para contas reais, usa PostgreSQL externo e backups regulares.
 
-```toml
-FINANCE_USERNAME = "financeiro"
-FINANCE_PASSWORD = "COLOCA_AQUI_UM_CODIGO_PRIVADO"
-# DATABASE_URL = "postgresql://utilizador:senha@servidor/base?sslmode=require"
-```
+## Acesso protegido
 
-Nunca publiques `.streamlit/secrets.toml` com palavras-passe no GitHub. O código de
-acesso anteriormente partilhado deve ser alterado antes de disponibilizar a aplicação
-à comunidade.
+Configura os segredos `FINANCE_USERNAME`, `FINANCE_PASSWORD` e `DATABASE_URL` nas
+Settings do Streamlit Cloud. **Não coloques credenciais no GitHub.** Usa uma nova
+palavra-passe, já que o código inicial foi partilhado na conversa.
 
-## Regras e histórico
+## Funcionalidades
 
+- Membros e mensalidades por ano/mês (3 500 XOF de referência), ✓ pago e ✓? por conferir.
+- Multas por atraso em treinos (500 XOF por treino), quarta até 20h15 e domingo até 08h15.
+- Aluguer de campo, equipamentos, lavagem, saldo mensal e anual.
+- Fotografia original em `assets/amigos_de_amigos_grupo.jpg`.
 - Presidente: Deoclecio Jayrson Ferreira Marinho.
-- Fotografia original do grupo em `assets/amigos_de_amigos_grupo.jpg`.
-- Mensalidade: 3 500 XOF; multa de atraso no **treino**: 500 XOF por ocorrência.
-- Treinos no INEFD: quarta-feira 20h00 (até 20h15), domingo 08h00 (até 08h15).
-- Multas pagas no dia; sem pagamento, não treina.
-- Histórico de 2026 carregado **para validação**, não como receitas confirmadas.
-- Despesas e aluguer de campo, balanço mensal, anual e acumulado.
 
-## Executar localmente
+## Testar localmente
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
-```
-
-Para executar testes:
-
-```bash
 python -m pytest -q
+streamlit run app.py
 ```
