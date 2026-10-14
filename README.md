@@ -1,3 +1,46 @@
+# Amigos de Amigos — Streamlit v4.4 (menu lateral e login visível)
+
+## Novidades da v4.4
+
+- Menu **vertical à esquerda**, sempre visível, com uma secção pública de cada vez à direita.
+- Opção **🔐 Acesso do financeiro** permanentemente no menu lateral. O formulário com nome de utilizador e código de acesso aparece na área direita.
+- Quando o financeiro entra, surgem mais oito páginas de gestão na **mesma barra lateral**, incluindo mensalidades, associados, despesas, aluguer e histórico de 2026.
+- A fotografia do grupo aparece na **Página principal** e em **O grupo**, não em todas as páginas.
+- Mantém o tratamento de erros de `photo_marks` da versão 4.3; não elimina registos antigos.
+
+## Ativar entrada do financeiro no Streamlit Cloud
+
+1. Abre Streamlit Cloud → **Manage app → Settings → Secrets**.
+2. Coloca as seguintes linhas substituindo o marcador por um código privado:
+
+   ```toml
+   FINANCE_USERNAME = "financeiro"
+   FINANCE_PASSWORD = "COLOCA_AQUI_O_CODIGO_PRIVADO"
+   ```
+
+3. Guarda e reinicia a aplicação.
+4. Seleciona **🔐 Acesso do financeiro** no menu lateral, escreve o nome de utilizador `financeiro` e o código configurado.
+
+**IMPORTANTE:** Não graves a palavra-passe no GitHub, `app.py` ou `secrets.toml.example`. O código inicialmente combinado já foi partilhado nesta conversa; recomenda-se alterá-lo antes de usar o sistema publicamente. O formulário surge mesmo sem secrets, mas não permite editar enquanto não estiver configurado.
+
+## Instalação / publicação
+
+Atualiza em conjunto `app.py`, `database.py`, `finance.py`, `requirements.txt`, `assets` e CSV no repositório. É importante manter a mesma versão dos três módulos. Depois faz commit e Streamlit Cloud → Manage app → Reboot app.
+
+A base de dados existente **não deve ser apagada**. As marcações de 2026 por confirmar não contam como receitas. Para persistência em produção, configura `DATABASE_URL` apontando para PostgreSQL externo e faz backups periódicos.
+
+## Executar localmente
+
+```bash
+pip install -r requirements.txt
+python -m pytest -q
+streamlit run app.py
+```
+
+---
+
+## Histórico da v4.3
+
 # Amigos de Amigos — Streamlit v4.3 (isolamento e recuperação de photo_marks)
 
 ## O que corrige

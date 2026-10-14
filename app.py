@@ -23,8 +23,8 @@ except ImportError:
     st.error('Não foi possível carregar os módulos da aplicação. Confirma os ficheiros e requirements.txt no GitHub.')
     st.stop()
 
-if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.3'
-        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.3'):
+if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.4'
+        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.4'):
     st.error('Ficheiros de versões diferentes detetados: atualiza app.py, database.py e finance.py em conjunto no mesmo repositório.')
     st.info('Não apagues a base de dados nem os registos de pagamentos. Substitui apenas o código e reinicia a aplicação.')
     st.stop()
@@ -60,9 +60,17 @@ st.markdown('''
     .pill {display:inline-block; color:#06483b; background:#e6f8ef; border-radius: 20px; padding: .25rem .65rem; font-size:.82rem; font-weight:600;}
     .club-subtitle {font-size:1.25rem;font-weight:600;color:#2a525e;}
     .club-schedule {border-left:4px solid #147d66; padding-left:1rem; margin-top:1.4rem;line-height:1.8;}
-    div[data-testid="stTabs"] button[data-baseweb="tab"] {font-size:1rem;font-weight:750; padding: .75rem .85rem; border-radius:10px 10px 0 0;}
-    div[data-testid="stTabs"] button[aria-selected="true"] {background:#126c61; color:#fff;}
-    div[data-testid="stTabs"] [data-baseweb="tab-list"] {gap:.2rem;}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {gap: .22rem;}
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {
+        padding: .52rem .7rem; border-radius: 9px; background: rgba(255,255,255,.07);
+        margin: 0; cursor:pointer; font-weight:600;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+        background: #137664; border: 1px solid rgba(255,255,255,.23);
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+        background: #1b6b70;
+    }
 </style>
 ''', unsafe_allow_html=True)
 
@@ -144,38 +152,59 @@ first_year = min([2026] + [int(m['start_year']) for m in member_rows] + [int(p['
 last_year = max([today.year + 1, 2026] + [int(p['year']) for p in pay_rows] +
                 [r['session_on'].year for r in training_rows])
 
+PUBLIC_PAGES = [
+    '🏠 Página principal',
+    '✅ Mensalidades',
+    '⏱️ Treinos e multas',
+    '💵 Finanças',
+    '🏟️ Aluguer do campo',
+    '📸 O grupo',
+]
+LOGIN_PAGE = '🔐 Acesso do financeiro'
+ADMIN_PAGES = [
+    '✅ Gerir mensalidades',
+    '⏱️ Gerir treinos e multas',
+    '🧾 Registar despesas e receitas',
+    '👥 Gerir membros',
+    '🗂️ Validar histórico de 2026',
+    '⚙️ Regras e exportação',
+    '🛠️ Corrigir movimentos',
+    '🏟️ Gerir aluguer do campo',
+]
+
+# A escolha vive na sessão. Nunca se altera o valor da radio depois de a renderizar.
+all_pages = PUBLIC_PAGES + [LOGIN_PAGE] + (ADMIN_PAGES if st.session_state.auth else [])
+if '_navigate_to' in st.session_state:
+    target_page = st.session_state.pop('_navigate_to')
+    if target_page in all_pages:
+        st.session_state['nav_page'] = target_page
+if st.session_state.get('nav_page') not in all_pages:
+    st.session_state['nav_page'] = PUBLIC_PAGES[0]
+
 with st.sidebar:
     st.markdown('## ⚽ Amigos de Amigos')
-    st.caption('Futsal · Pavilhão do INEFD')
+    st.caption('Pavilhão do INEFD · Futsal')
     st.markdown('**Quartas 20h00 · Domingos 08h00**')
     st.divider()
-    view_year = st.selectbox('Ano de consulta', list(range(last_year, first_year - 1, -1)),
-                             index=max(0, last_year - max(today.year, first_year)), key='year_picker')
-    st.caption('As contas acumuladas transitam automaticamente de um ano para o seguinte.')
+    st.markdown('#### ☰ MENU')
+    page = st.radio('Navegação do sistema', all_pages, key='nav_page', label_visibility='collapsed')
     st.divider()
-    st.markdown('#### 🔐 Conta do financeiro')
+    view_year = st.selectbox('📅 Ano de consulta', list(range(last_year, first_year - 1, -1)),
+                             index=max(0, last_year - max(today.year, first_year)), key='year_picker')
+    st.caption('Seleciona um ano para consultar as respetivas contas.')
+    st.divider()
     if st.session_state.auth:
-        st.success('Sessão de gestão ativa')
+        st.success('🔓 Financeiro autenticado')
         if st.button('Terminar sessão', use_container_width=True):
             st.session_state.auth = False
+            st.session_state['_navigate_to'] = PUBLIC_PAGES[0]
             st.rerun()
     else:
-        if not secret('FINANCE_PASSWORD'):
-            st.info('Consulta pública ativa. O responsável deve configurar FINANCE_PASSWORD para gerir.')
-        else:
-            with st.form('login_form'):
-                username = st.text_input('Utilizador', value='financeiro')
-                password = st.text_input('Código de acesso', type='password')
-                login = st.form_submit_button('Entrar na gestão', use_container_width=True)
-                if login:
-                    if (hmac.compare_digest(username.strip().encode(), (secret('FINANCE_USERNAME') or 'financeiro').encode())
-                            and hmac.compare_digest(password.encode(), secret('FINANCE_PASSWORD').encode())):
-                        st.session_state.auth = True
-                        st.rerun()
-                    else:
-                        st.error('Palavra-passe incorreta')
-    st.divider()
-    st.caption('Transparência nas quotas, nas despesas e na utilização do dinheiro do grupo.')
+        st.info('Consulta pública · Modo de leitura')
+        if st.button('🔐 Entrar como financeiro', use_container_width=True):
+            st.session_state['_navigate_to'] = LOGIN_PAGE
+            st.rerun()
+    st.caption('Presidente: Deoclecio Jayrson Ferreira Marinho')
 
 cfg = get_year_settings(engine, view_year)
 ledger = make_ledger(member_rows, pay_rows, waive_rows, cfg, view_year, today=today, photo_rows=photo_rows)
@@ -183,44 +212,43 @@ stats = yearly_summary(ledger, pay_rows, expense_rows, income_rows, view_year, t
 rent_cfg = get_rent_plan(engine, view_year)
 rent_months = rent_grid(view_year, rent_cfg['monthly_rent'], rent_rows, today=today)
 monthly = monthly_breakdown(pay_rows, expense_rows, income_rows, training_rows, rent_rows, view_year)
+member_by_id = {m['id']: m for m in member_rows}  # Usado por várias páginas privadas independentemente da navegação.
 
-head_text, head_photo = st.columns([1.05, 1.15], gap='large', vertical_alignment='center')
-with head_text:
-    st.title('⚽ Amigos de Amigos')
-    st.markdown('<div class="club-subtitle">Mais do que futsal, uma amizade.</div>', unsafe_allow_html=True)
-    st.caption('Presidente: Deoclecio Jayrson Ferreira Marinho')
-    st.markdown('<div class="club-schedule">'
-                '📍 <b>Pavilhão do INEFD</b><br>'
-                '⚽ <b>Quarta-feira</b> · 20h00 · tolerância até 20h15<br>'
-                '⚽ <b>Domingo</b> · 08h00 · tolerância até 08h15<br>'
-                f'💰 Mensalidade: <b>{xof(cfg["monthly_fee"])}</b> · Multa por atraso no treino: <b>{xof(cfg["late_fee"])}</b><br>'
-                '⛔ Multa não paga no dia = sem autorização para treinar.'
-                '</div>', unsafe_allow_html=True)
-    st.markdown(f'<span class="pill">PAINEL FINANCEIRO · {view_year}</span>', unsafe_allow_html=True)
-with head_photo:
-    if PHOTO_PATH.exists():
-        st.image(str(PHOTO_PATH), use_container_width=True, caption='Fotografia do nosso grupo · Amigos de Amigos')
-    else:
-        st.caption('Imagem do grupo não encontrada. Verifica a pasta assets.')
+if page == PUBLIC_PAGES[0]:
+    head_text, head_photo = st.columns([1.05, 1.15], gap='large', vertical_alignment='center')
+    with head_text:
+        st.title('⚽ Amigos de Amigos')
+        st.markdown('<div class="club-subtitle">Mais do que futsal, uma amizade.</div>', unsafe_allow_html=True)
+        st.caption('Presidente: Deoclecio Jayrson Ferreira Marinho')
+        st.markdown('<div class="club-schedule">'
+                    '📍 <b>Pavilhão do INEFD</b><br>'
+                    '⚽ <b>Quarta-feira</b> · 20h00 · tolerância até 20h15<br>'
+                    '⚽ <b>Domingo</b> · 08h00 · tolerância até 08h15<br>'
+                    f'💰 Mensalidade: <b>{xof(cfg["monthly_fee"])}</b> · Multa por atraso no treino: <b>{xof(cfg["late_fee"])}</b><br>'
+                    '⛔ Multa não paga no dia = sem autorização para treinar.'
+                    '</div>', unsafe_allow_html=True)
+        st.markdown(f'<span class="pill">PAINEL FINANCEIRO · {view_year}</span>', unsafe_allow_html=True)
+    with head_photo:
+        if PHOTO_PATH.exists():
+            st.image(str(PHOTO_PATH), use_container_width=True, caption='Fotografia do nosso grupo · Amigos de Amigos')
+        else:
+            st.caption('Imagem do grupo não encontrada. Verifica a pasta assets.')
 
-if not cfg['verified']:
-    if photo_ok:
-        st.warning(f'**Histórico de {view_year} ainda por confirmar.** As marcas identificadas na fotografia de 2026 aparecem como ✓? e não entram no saldo até o financeiro confirmar o recebimento.')
-    else:
-        st.warning(f'**Histórico de {view_year} por confirmar.** A leitura das marcas da fotografia não está disponível neste momento.')
+    if not cfg['verified']:
+        if photo_ok:
+            st.warning(f'**Histórico de {view_year} ainda por confirmar.** As marcas identificadas na fotografia de 2026 aparecem como ✓? e não entram no saldo até o financeiro confirmar o recebimento.')
+        else:
+            st.warning(f'**Histórico de {view_year} por confirmar.** A leitura das marcas da fotografia não está disponível neste momento.')
 
-# Indicadores de caixa globais e anuais: saldo é caixa, dívida não conta como dinheiro recebido.
-a, b, c, d, e = st.columns(5)
-a.metric('Saldo acumulado em caixa', xof(stats['total_balance']))
-b.metric(f'Receitas em {view_year}', xof(stats['receipts']))
-c.metric(f'Despesas em {view_year}', xof(stats['costs']))
-d.metric(f'Dívidas previstas em {view_year}', xof(stats['arrears']))
-e.metric('Multas de treino pendentes', xof(stats['fine_debts']))
-st.caption(f"Associados registados: {len(member_rows)} · Multas recebidas em {view_year}: {xof(stats['fine_income'])}")
+    # Indicadores de caixa globais e anuais: saldo é caixa, dívida não conta como dinheiro recebido.
+    a, b, c, d, e = st.columns(5)
+    a.metric('Saldo acumulado em caixa', xof(stats['total_balance']))
+    b.metric(f'Receitas em {view_year}', xof(stats['receipts']))
+    c.metric(f'Despesas em {view_year}', xof(stats['costs']))
+    d.metric(f'Dívidas previstas em {view_year}', xof(stats['arrears']))
+    e.metric('Multas de treino pendentes', xof(stats['fine_debts']))
+    st.caption(f"Associados registados: {len(member_rows)} · Multas recebidas em {view_year}: {xof(stats['fine_income'])}")
 
-public_tabs = st.tabs(['🏠 VISÃO GERAL', '✅ MENSALIDADES', '⏱️ TREINOS E MULTAS', '💵 FINANÇAS', '📸 O GRUPO', '🏟️ ALUGUER DO CAMPO'])
-
-with public_tabs[0]:
     left, right = st.columns([1.6, 1])
     with left:
         st.subheader('Movimento financeiro mensal')
@@ -254,7 +282,7 @@ with public_tabs[0]:
     else:
         st.info('Ainda não existem mensalidades aplicáveis neste mês.')
 
-with public_tabs[1]:
+if page == PUBLIC_PAGES[1]:
     st.subheader(f'Mensalidades de {view_year}')
     st.caption(f"Quota mensal: {xof(cfg['monthly_fee'])}. A multa de {xof(cfg['late_fee'])} aplica-se exclusivamente a chegadas tardias aos treinos, nunca à mensalidade.")
     search = st.text_input('Pesquisar membro', placeholder='Escreve parte do nome...', key='search_public')
@@ -279,7 +307,7 @@ with public_tabs[1]:
                      .assign(mes=lambda d: d['mes'].apply(lambda m: MONTHS[m - 1]))
                      .rename(columns={'mes':'Mês'}), hide_index=True, use_container_width=True)
 
-with public_tabs[3]:
+if page == PUBLIC_PAGES[3]:
     st.subheader('Como o dinheiro do grupo é utilizado')
     spend = [e for e in expense_rows if e['expense_on'].year == view_year]
     st.metric('Aluguer do campo pago no ano', xof(stats['rent_cost']))
@@ -318,7 +346,7 @@ with public_tabs[3]:
     else:
         st.info('Sem movimentos financeiros registados neste ano.')
 
-with public_tabs[2]:
+if page == PUBLIC_PAGES[2]:
     st.subheader(f'Treinos e multas · {view_year}')
     st.caption(f'Quarta: início 20h00, sem multa até 20h15 · Domingo: início 08h00, sem multa até 08h15. '
                f'Cada chegada posterior ao limite gera {xof(cfg["late_fee"])}, a pagar no próprio dia para poder treinar.')
@@ -346,7 +374,7 @@ with public_tabs[2]:
                                     'Em dívida (XOF)': r['fine_due'] - r['fine_paid']} for r in pending]),
                      hide_index=True, use_container_width=True)
 
-with public_tabs[4]:
+if page == PUBLIC_PAGES[5]:
     st.subheader('A nossa equipa')
     if PHOTO_PATH.exists():
         st.image(str(PHOTO_PATH), use_container_width=True, caption='Amigos de Amigos · Pavilhão do INEFD')
@@ -354,7 +382,7 @@ with public_tabs[4]:
     st.write('Os treinos realizam-se às quartas-feiras, às 20h00, e aos domingos, às 08h00, no Pavilhão do INEFD.')
     st.write('**Presidente:** Deoclecio Jayrson Ferreira Marinho')
 
-with public_tabs[5]:
+if page == PUBLIC_PAGES[4]:
     st.subheader(f'🏟️ Aluguer do pavilhão · {view_year}')
     if not rent_cfg['monthly_rent']:
         st.info('O valor mensal do aluguer ainda não foi configurado. O financeiro deve introduzi-lo na área de gestão do campo.')
@@ -374,412 +402,459 @@ with public_tabs[5]:
     if old_rents:
         st.warning(f'Existem {len(old_rents)} despesa(s) antigas de aluguer sem mês de referência. Já contam nas despesas gerais, mas não neste quadro mensal. O financeiro deve conferir antes de as relançar, para não duplicar o custo.')
 
-if st.session_state.auth:
+if page == LOGIN_PAGE:
+    st.title('🔐 Acesso do Financeiro')
+    st.caption('Área reservada à pessoa responsável pela tesouraria dos Amigos de Amigos.')
+    if st.session_state.auth:
+        st.success('Sessão de gestão iniciada. Escolhe uma das secções de administração no menu à esquerda.')
+        if st.button('✅ Abrir gestão de mensalidades', type='primary'):
+            st.session_state['_navigate_to'] = ADMIN_PAGES[0]
+            st.rerun()
+    else:
+        col_login, _ = st.columns([1.05, 1])
+        with col_login:
+            with st.form('login_financeiro', clear_on_submit=False):
+                st.markdown('### Entrar na gestão')
+                username = st.text_input('Nome de utilizador', value='financeiro', autocomplete='username')
+                password = st.text_input('Código de acesso', type='password', autocomplete='current-password')
+                login = st.form_submit_button('Entrar como financeiro', type='primary', use_container_width=True)
+            if login:
+                expected_user = secret('FINANCE_USERNAME') or 'financeiro'
+                expected_password = secret('FINANCE_PASSWORD')
+                if not expected_password:
+                    st.error('O acesso ainda não está configurado no Streamlit Cloud. Consulta as instruções abaixo.')
+                elif (hmac.compare_digest(username.strip().encode(), expected_user.encode())
+                      and hmac.compare_digest(password.encode(), expected_password.encode())):
+                    st.session_state.auth = True
+                    st.session_state['_navigate_to'] = ADMIN_PAGES[0]
+                    st.rerun()
+                else:
+                    st.error('Utilizador ou código de acesso incorreto.')
+        if not secret('FINANCE_PASSWORD'):
+            st.warning('O login está visível, mas ainda tens de definir as credenciais nos Secrets da aplicação.')
+            st.markdown('Abre **Streamlit Cloud → Manage app → Settings → Secrets** e coloca:')
+            st.code('FINANCE_USERNAME = "financeiro"\nFINANCE_PASSWORD = "<codigo-privado>"', language='toml')
+            st.caption('Utiliza o código combinado com o financeiro e substitui-o por outro antes de expor publicamente o sistema. Nunca publiques o código no GitHub.')
+
+if st.session_state.auth and page == ADMIN_PAGES[0]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[0])
+    st.subheader('Atualizar a grelha de mensalidades dos associados')
+    st.caption('Seleciona o membro, marca os meses com quota efetivamente recebida e guarda. '
+               'As marcas da fotografia (✓?) só viram receita quando confirmadas. Para desfazer um pagamento, '
+               'é necessário autorizar a anulação; a operação fica no histórico de alterações.')
+    if member_rows:
+        options = {m['id']: m for m in sorted(member_rows, key=lambda x: x['name'])}
+        chosen_member = st.selectbox('Membro a atualizar', list(options),
+                                      format_func=lambda x: options[x]['name'], key='grid_member')
+        member_history = ledger[ledger['id'] == chosen_member].sort_values('mes')
+        st.dataframe(member_history[['mes','Estado','Pago','Por confirmar','Em dívida']]
+                     .assign(mes=lambda f: f['mes'].map(lambda m: MONTHS[m-1]))
+                     .rename(columns={'mes':'Mês', 'Pago':'Recebido (XOF)',
+                                      'Por confirmar':'Fotografia (XOF)', 'Em dívida':'Em falta (XOF)'}),
+                     hide_index=True, use_container_width=True)
+        with st.form(f'payment_grid_{view_year}_{chosen_member}'):
+            st.markdown('**Meses com mensalidade confirmada:**')
+            marks = {}
+            for start in range(0, 12, 4):
+                cbs = st.columns(4)
+                for j, col in enumerate(cbs):
+                    month = start+j+1
+                    rec = member_history[member_history['mes'] == month].iloc[0]
+                    with col:
+                        marks[month] = st.checkbox(MONTH_ABBR[month-1] + (' (✓?)' if rec['Sinal']=='✓?' else ''),
+                                                   value=bool(rec['Pago'] >= rec['Devido'] and rec['Devido']>0),
+                                                   disabled=not bool(rec['Aplicável']), key=f'mrk_{view_year}_{chosen_member}_{month}')
+            historical_unknown = st.checkbox('Data exata dos recebimentos antigos desconhecida', value=view_year==2026)
+            actual_day = None
+            if not historical_unknown:
+                actual_day = st.date_input('Data real de pagamento dos meses a marcar', value=today, max_value=today,
+                                           key=f'dt_grid_{view_year}_{chosen_member}')
+            undo_authorized = st.checkbox('Autorizo retirar quotas já recebidas que desmarquei (altera o saldo de caixa)', value=False)
+            if st.form_submit_button('Guardar os 12 meses deste membro', type='primary'):
+                actions = []
+                for rec in member_history.to_dict('records'):
+                    m = int(rec['mes'])
+                    if not rec['Aplicável']:
+                        continue
+                    was_confirmed = rec['Pago'] >= rec['Devido'] and rec['Devido']>0
+                    if marks[m] and not was_confirmed:
+                        actions.append((m, True))
+                    elif not marks[m] and rec['Pago'] >= rec['Devido'] and rec['Devido'] > 0:
+                        actions.append((m, False))
+                if any(not is_paid for _, is_paid in actions) and not undo_authorized:
+                    st.error('Há mensalidades a anular. Marca a confirmação de anulação ou volta a selecionar os meses.')
+                else:
+                    try:
+                        count, amounts = 0, 0
+                        for m, yes in actions:
+                            amounts += set_member_month_status(engine, chosen_member, view_year, m, yes,
+                                      int(cfg['monthly_fee']), actual_day, allow_undo=undo_authorized)
+                            count += 1
+                        reload_ok(f'Grelha atualizada: {count} meses corrigidos; variação no saldo: {xof(amounts)}.')
+                    except ValueError as exc:
+                        st.error(str(exc))
     st.divider()
-    st.header('🔐 Área do financeiro')
-    management = st.tabs(['✅ Gerir mensalidades', '⏱️ Treinos e multas', '🧾 Despesas / receitas', '👥 Membros',
-                          '🗂 Histórico 2026', '⚙️ Regras e exportação', '🛠 Corrigir movimentos', '🏟️ Aluguer do campo'])
-
-    with management[0]:
-        st.subheader('Atualizar a grelha de mensalidades dos associados')
-        st.caption('Seleciona o membro, marca os meses com quota efetivamente recebida e guarda. '
-                   'As marcas da fotografia (✓?) só viram receita quando confirmadas. Para desfazer um pagamento, '
-                   'é necessário autorizar a anulação; a operação fica no histórico de alterações.')
-        if member_rows:
-            options = {m['id']: m for m in sorted(member_rows, key=lambda x: x['name'])}
-            chosen_member = st.selectbox('Membro a atualizar', list(options),
-                                          format_func=lambda x: options[x]['name'], key='grid_member')
-            member_history = ledger[ledger['id'] == chosen_member].sort_values('mes')
-            st.dataframe(member_history[['mes','Estado','Pago','Por confirmar','Em dívida']]
-                         .assign(mes=lambda f: f['mes'].map(lambda m: MONTHS[m-1]))
-                         .rename(columns={'mes':'Mês', 'Pago':'Recebido (XOF)',
-                                          'Por confirmar':'Fotografia (XOF)', 'Em dívida':'Em falta (XOF)'}),
-                         hide_index=True, use_container_width=True)
-            with st.form(f'payment_grid_{view_year}_{chosen_member}'):
-                st.markdown('**Meses com mensalidade confirmada:**')
-                marks = {}
-                for start in range(0, 12, 4):
-                    cbs = st.columns(4)
-                    for j, col in enumerate(cbs):
-                        month = start+j+1
-                        rec = member_history[member_history['mes'] == month].iloc[0]
-                        with col:
-                            marks[month] = st.checkbox(MONTH_ABBR[month-1] + (' (✓?)' if rec['Sinal']=='✓?' else ''),
-                                                       value=bool(rec['Pago'] >= rec['Devido'] and rec['Devido']>0),
-                                                       disabled=not bool(rec['Aplicável']), key=f'mrk_{view_year}_{chosen_member}_{month}')
-                historical_unknown = st.checkbox('Data exata dos recebimentos antigos desconhecida', value=view_year==2026)
-                actual_day = None
-                if not historical_unknown:
-                    actual_day = st.date_input('Data real de pagamento dos meses a marcar', value=today, max_value=today,
-                                               key=f'dt_grid_{view_year}_{chosen_member}')
-                undo_authorized = st.checkbox('Autorizo retirar quotas já recebidas que desmarquei (altera o saldo de caixa)', value=False)
-                if st.form_submit_button('Guardar os 12 meses deste membro', type='primary'):
-                    actions = []
-                    for rec in member_history.to_dict('records'):
-                        m = int(rec['mes'])
-                        if not rec['Aplicável']:
-                            continue
-                        was_confirmed = rec['Pago'] >= rec['Devido'] and rec['Devido']>0
-                        if marks[m] and not was_confirmed:
-                            actions.append((m, True))
-                        elif not marks[m] and rec['Pago'] >= rec['Devido'] and rec['Devido'] > 0:
-                            actions.append((m, False))
-                    if any(not is_paid for _, is_paid in actions) and not undo_authorized:
-                        st.error('Há mensalidades a anular. Marca a confirmação de anulação ou volta a selecionar os meses.')
-                    else:
-                        try:
-                            count, amounts = 0, 0
-                            for m, yes in actions:
-                                amounts += set_member_month_status(engine, chosen_member, view_year, m, yes,
-                                          int(cfg['monthly_fee']), actual_day, allow_undo=undo_authorized)
-                                count += 1
-                            reload_ok(f'Grelha atualizada: {count} meses corrigidos; variação no saldo: {xof(amounts)}.')
-                        except ValueError as exc:
-                            st.error(str(exc))
-        st.divider()
-        st.subheader('Registar pagamentos parciais ou montantes específicos')
-        member_by_id = {m['id']: m for m in member_rows}
-        if member_by_id:
-            with st.form('new_payment', clear_on_submit=True):
-                member_id = st.selectbox('Membro', list(sorted(member_by_id, key=lambda k: member_by_id[k]['name'])),
-                                         format_func=lambda i: f"{member_by_id[i]['name']} (#{i})")
-                c1,c2,c3 = st.columns(3)
-                paid_year = c1.number_input('Ano da mensalidade', min_value=2020, max_value=2100, value=view_year, step=1)
-                paid_month = c2.selectbox('Mês a que se refere', range(1,13), index=min(today.month-1,11),
-                                          format_func=lambda x: MONTHS[x-1])
-                amount = c3.number_input('Montante recebido (XOF)', min_value=1, step=500, value=int(cfg['monthly_fee']))
-                payment_date = st.date_input('Data do recebimento', value=today, max_value=today)
-                notes = st.text_input('Observações', placeholder='Ex.: quota de outubro; transferência bancária')
-                if st.form_submit_button('Guardar recebimento', type='primary'):
-                    if not is_expected(member_by_id[member_id], paid_year, paid_month):
-                        st.error('Verifica a data de entrada do membro.')
-                    else:
-                        add_payment(engine, member_id, paid_year, paid_month, amount, payment_date, notes)
-                        reload_ok('Pagamento registado. A situação do membro e a tesouraria foram atualizadas.')
-        st.divider()
-        st.subheader('Editar um recebimento já registado')
-        if pay_rows:
-            p_map = {p['id']:p for p in pay_rows}
-            p_edit_id = st.selectbox('Escolher o recebimento', list(reversed(sorted(p_map))),
-                format_func=lambda n: f"#{n} · {options.get(p_map[n]['member_id'], {}).get('name', '—')} · " +
-                f"{MONTHS[p_map[n]['month']-1]}/{p_map[n]['year']} · {xof(p_map[n]['amount'])}", key='edit_payment_id')
-            record = p_map[p_edit_id]
-            with st.form(f'edit_payment_{p_edit_id}'):
-                cols = st.columns(3)
-                emember = cols[0].selectbox('Membro', list(options), index=list(options).index(record['member_id']),
-                                            format_func=lambda i: options[i]['name'])
-                eyear = cols[1].number_input('Ano de referência', min_value=2020,max_value=2100,
-                                              value=int(record['year']))
-                emonth = cols[2].selectbox('Mês de referência', range(1,13), index=int(record['month'])-1,
-                                           format_func=lambda i: MONTHS[i-1])
-                ev = st.number_input('Montante efetivo (XOF)', min_value=1, step=500, value=int(record['amount']))
-                date_not_known = st.checkbox('Data de recebimento desconhecida (histórico)',
-                                              value=record['paid_on'] is None)
-                ereceived = None if date_not_known else st.date_input('Data real de recebimento',
-                    value=record['paid_on'] or today, max_value=today)
-                enote = st.text_input('Observação', value=record['note'] or '')
-                if st.form_submit_button('Guardar correção do pagamento', type='primary'):
-                    try:
-                        update_payment(engine, p_edit_id, emember, eyear, emonth, ev, ereceived, enote)
-                        reload_ok('Lançamento corrigido. Mensalidades e saldos recalculados.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-        st.caption('Permite pagamentos parciais e antecipados. A mensalidade não tem multa de atraso. '
-                   'As multas de chegada tardia são registadas no separador «Treinos e multas».')
-
-    with management[1]:
-        st.subheader('Registar presença e multa por atraso')
-        st.caption('O estado é calculado automaticamente: depois de 20h15 à quarta ou 08h15 ao domingo '
-                   'cobra-se a multa configurada para esse ano, por cada atraso. Se não pagar no dia, não está autorizado a treinar.')
-        member_by_id = {m['id']: m for m in member_rows}
-        if member_by_id:
-            training_date = st.date_input('Data do treino', value=today, max_value=today, key='training_date')
-            if training_date.weekday() not in (2, 6):
-                st.warning('Escolhe uma quarta-feira ou um domingo para registar a presença.')
-            with st.form('training_entry', clear_on_submit=False):
-                c1, c2 = st.columns(2)
-                member_id = c1.selectbox('Associado', list(sorted(member_by_id, key=lambda k: member_by_id[k]['name'])),
-                                         format_func=lambda i: member_by_id[i]['name'], key='training_member')
-                training_status = c2.selectbox('Comparência', ['Presente', 'Falta'])
-                arrival_at = st.time_input('Hora de chegada (se presente)', value=time(8, 0) if training_date.weekday() == 6 else time(20, 0), step=60, key=f'arrival_{training_date}')
-                paid_fine = st.checkbox('Multa recebida integralmente (caso se aplique)', value=False)
-                payment_day = st.date_input('Data efetiva do recebimento', value=today, max_value=today)
-                training_note = st.text_input('Observações do treino', placeholder='Ex.: atraso após o horário limite')
-                if st.form_submit_button('Guardar registo do treino', type='primary'):
-                    try:
-                        _, limit = session_times(training_date)
-                        is_late = training_status == 'Presente' and arrival_at > limit
-                        if paid_fine and not is_late:
-                            st.error('O associado não tem multa neste treino. Desmarca «Multa recebida».')
-                        else:
-                            due = add_attendance(
-                                engine, member_id, training_date, training_status,
-                                arrived_at if training_status == 'Presente' else None,
-                                int(get_year_settings(engine, training_date.year)['late_fee']),
-                                paid=paid_fine, paid_on=payment_day if paid_fine else None,
-                                note=training_note,
-                            )
-                            if due:
-                                outcome = 'multa recebida' if paid_fine and payment_day == training_date else (
-                                    'multa liquidada fora do dia' if paid_fine else 'multa por cobrar; não treina')
-                            else:
-                                outcome = 'sem multa'
-                            reload_ok(f'Registo guardado: {outcome}.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-        st.divider()
-        st.subheader('Regularizar multas pendentes')
-        pending = sorted([r for r in training_rows if r['fine_due'] > r['fine_paid']],
-                         key=lambda r: r['session_on'], reverse=True)
-        if not pending:
-            st.success('Não há multas pendentes de pagamento.')
-        else:
-            with st.form('pay_training_fine'):
-                pending_map = {r['id']: r for r in pending}
-                rid = st.selectbox('Multa a liquidar', list(pending_map), format_func=lambda i:
-                                   f"{member_by_id[pending_map[i]['member_id']]['name']} · "
-                                   f"{pending_map[i]['session_on'].strftime('%d/%m/%Y')} · "
-                                   f"{xof(pending_map[i]['fine_due'] - pending_map[i]['fine_paid'])}")
-                received_at = st.date_input('Quando foi efetivamente recebida a multa?', value=today, max_value=today,
-                                            key='fine_payment_date')
-                if st.form_submit_button('Confirmar recebimento', type='primary'):
-                    try:
-                        pay_attendance_fine(engine, rid, received_at)
-                        reload_ok('Multa paga e recebimento incluído nas contas do grupo.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-        st.divider()
-        st.subheader('Corrigir presença registada por engano')
-        st.caption('Só é possível apagar presenças sem multa recebida. Assim, um recebimento não desaparece das contas.')
-        if training_rows:
-            recent_entries = sorted(training_rows, key=lambda r: (r['session_on'], r['id']), reverse=True)[:300]
-            recent_map = {r['id']: r for r in recent_entries}
-            rid_bad = st.selectbox('Registo a corrigir', list(recent_map), format_func=lambda i:
-                                   f"{recent_map[i]['session_on'].strftime('%d/%m/%Y')} · "
-                                   f"{member_by_id.get(recent_map[i]['member_id'], {}).get('name', '—')} · "
-                                   f"{arrival_outcome(recent_map[i])}", key='training_correct')
-            if st.checkbox('Confirmo que este registo de treino está errado', key='confirm_del_training'):
-                if st.button('Eliminar registo de presença incorreto'):
-                    try:
-                        remove_attendance(engine, rid_bad)
-                        reload_ok('Registo corrigido. Podes voltar a introduzir a presença.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-
-    with management[2]:
-        expense_col, income_col = st.columns(2)
-        with expense_col:
-            st.subheader('Nova despesa')
-            with st.form('new_expense', clear_on_submit=True):
-                expense_day = st.date_input('Data da despesa', value=today, max_value=today)
-                category = st.selectbox('Categoria (aluguer tem separador próprio)',
-                                        [c for c in EXPENSE_CATEGORIES if c != 'Aluguer do pavilhão'])
-                what = st.text_input('Descrição / fornecedor', placeholder='Ex.: aluguer INEFD, mês de outubro')
-                expense_amount = st.number_input('Valor pago (XOF)', min_value=1, step=500, value=3500)
-                if st.form_submit_button('Guardar despesa', type='primary'):
-                    add_expense(engine, expense_day, category, what, expense_amount)
-                    reload_ok('Despesa registada e saldo atualizado.')
-        with income_col:
-            st.subheader('Outra receita')
-            with st.form('new_income', clear_on_submit=True):
-                income_day = st.date_input('Data do recebimento extra', value=today, max_value=today)
-                inc_category = st.selectbox('Tipo de receita', INCOME_CATEGORIES)
-                inc_desc = st.text_input('Origem / observação', placeholder='Ex.: contribuição de um patrocinador')
-                inc_amount = st.number_input('Montante da receita (XOF)', min_value=1, step=500, value=3500)
-                if st.form_submit_button('Guardar outra receita', type='primary'):
-                    add_income(engine, income_day, inc_category, inc_desc, inc_amount)
-                    reload_ok('Receita extraordinária registada.')
-        st.info('Para começar com dinheiro que já existe na caixa, regista-o como **Outra receita → Saldo inicial**, apenas uma vez. Nos anos seguintes o saldo transita automaticamente.')
-
-    with management[3]:
-        st.subheader('Associados')
-        st.dataframe(pd.DataFrame(member_rows).rename(columns={
-            'id': 'N.º', 'name':'Nome', 'start_year':'Ano entrada', 'start_month':'Mês entrada',
-            'end_year':'Ano saída', 'end_month':'Mês saída', 'needs_review':'Nome por conferir'
-        }), hide_index=True, use_container_width=True)
-        left,right = st.columns(2)
-        with left:
-            st.markdown('**Adicionar membro**')
-            with st.form('add_member', clear_on_submit=True):
-                new_name = st.text_input('Nome')
-                new_y = st.number_input('Ano de entrada', min_value=2020, max_value=2100, value=today.year)
-                new_m = st.selectbox('Mês de entrada', range(1,13), index=today.month-1, format_func=lambda i: MONTHS[i-1])
-                if st.form_submit_button('Adicionar'):
-                    try:
-                        add_member(engine, new_name, new_y, new_m)
-                        reload_ok('Membro adicionado.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-        with right:
-            st.markdown('**Corrigir nome, entrada ou saída**')
-            edit_id = st.selectbox('Selecionar membro', list(sorted(member_by_id)),
-                                   format_func=lambda i: f"{member_by_id[i]['name']} (#{i})", key='edit_member')
-            selected = member_by_id[edit_id]
-            with st.form(f'edit_m_{edit_id}'):
-                edit_name = st.text_input('Nome oficial', value=selected['name'])
-                b1,b2 = st.columns(2)
-                from_y = b1.number_input('Ano entrada', min_value=2020,max_value=2100, value=int(selected['start_year']))
-                from_m = b2.selectbox('Mês entrada', range(1,13), index=int(selected['start_month'])-1,
-                                      format_func=lambda i: MONTHS[i-1])
-                is_left = st.checkbox('O membro deixou o grupo', value=selected['end_year'] is not None)
-                stop_y, stop_m = None, None
-                if is_left:
-                    c1,c2 = st.columns(2)
-                    stop_y = c1.number_input('Ano de saída', min_value=2020, max_value=2100,
-                                              value=int(selected['end_year'] or today.year))
-                    stop_m = c2.selectbox('Mês de saída', range(1,13),
-                                          index=int(selected['end_month'] or today.month)-1,
-                                          format_func=lambda i: MONTHS[i-1])
-                needs_review = st.checkbox('Grafia ainda por confirmar', value=bool(selected['needs_review']))
-                if st.form_submit_button('Guardar alterações'):
-                    try:
-                        change_member(engine, edit_id, edit_name, from_y, from_m, stop_y, stop_m, needs_review)
-                        reload_ok('Ficha do membro atualizada.')
-                    except ValueError as exc:
-                        st.error(str(exc))
-        st.caption('A data de entrada/saída determina quais os meses com mensalidade devida. Os pagamentos antigos permanecem guardados.')
-
-    with management[4]:
-        if not photo_ok:
-            st.error('Conferência suspensa: a tabela photo_marks não pôde ser consultada. Os movimentos financeiros estão preservados.')
-            st.info('Consulta os logs e corrige a base de dados antes de validar as marcas antigas.')
-        else:
-            st.subheader('Fotografias do registo de 2026')
-            st.warning('Esta transcrição é uma **proposta**. Nem todas as grafias e cruzes são nítidas. Nenhum X significa falta de pagamento comprovada, e as datas dos pagamentos assinalados não são conhecidas.')
-            example_path = Path(__file__).parent / 'historico_foto_2026_para_validar.csv'
-            if example_path.exists():
-                st.download_button('Descarregar proposta de transcrição (CSV)', example_path.read_bytes(),
-                                   file_name=example_path.name, mime='text/csv')
-            uploaded = st.file_uploader('Carregar CSV da proposta ou ficheiro corrigido', type=['csv'], key='historical_upload')
-            if uploaded is not None:
+    st.subheader('Registar pagamentos parciais ou montantes específicos')
+    member_by_id = {m['id']: m for m in member_rows}
+    if member_by_id:
+        with st.form('new_payment', clear_on_submit=True):
+            member_id = st.selectbox('Membro', list(sorted(member_by_id, key=lambda k: member_by_id[k]['name'])),
+                                     format_func=lambda i: f"{member_by_id[i]['name']} (#{i})")
+            c1,c2,c3 = st.columns(3)
+            paid_year = c1.number_input('Ano da mensalidade', min_value=2020, max_value=2100, value=view_year, step=1)
+            paid_month = c2.selectbox('Mês a que se refere', range(1,13), index=min(today.month-1,11),
+                                      format_func=lambda x: MONTHS[x-1])
+            amount = c3.number_input('Montante recebido (XOF)', min_value=1, step=500, value=int(cfg['monthly_fee']))
+            payment_date = st.date_input('Data do recebimento', value=today, max_value=today)
+            notes = st.text_input('Observações', placeholder='Ex.: quota de outubro; transferência bancária')
+            if st.form_submit_button('Guardar recebimento', type='primary'):
+                if not is_expected(member_by_id[member_id], paid_year, paid_month):
+                    st.error('Verifica a data de entrada do membro.')
+                else:
+                    add_payment(engine, member_id, paid_year, paid_month, amount, payment_date, notes)
+                    reload_ok('Pagamento registado. A situação do membro e a tesouraria foram atualizadas.')
+    st.divider()
+    st.subheader('Editar um recebimento já registado')
+    if pay_rows:
+        p_map = {p['id']:p for p in pay_rows}
+        p_edit_id = st.selectbox('Escolher o recebimento', list(reversed(sorted(p_map))),
+            format_func=lambda n: f"#{n} · {options.get(p_map[n]['member_id'], {}).get('name', '—')} · " +
+            f"{MONTHS[p_map[n]['month']-1]}/{p_map[n]['year']} · {xof(p_map[n]['amount'])}", key='edit_payment_id')
+        record = p_map[p_edit_id]
+        with st.form(f'edit_payment_{p_edit_id}'):
+            cols = st.columns(3)
+            emember = cols[0].selectbox('Membro', list(options), index=list(options).index(record['member_id']),
+                                        format_func=lambda i: options[i]['name'])
+            eyear = cols[1].number_input('Ano de referência', min_value=2020,max_value=2100,
+                                          value=int(record['year']))
+            emonth = cols[2].selectbox('Mês de referência', range(1,13), index=int(record['month'])-1,
+                                       format_func=lambda i: MONTHS[i-1])
+            ev = st.number_input('Montante efetivo (XOF)', min_value=1, step=500, value=int(record['amount']))
+            date_not_known = st.checkbox('Data de recebimento desconhecida (histórico)',
+                                          value=record['paid_on'] is None)
+            ereceived = None if date_not_known else st.date_input('Data real de recebimento',
+                value=record['paid_on'] or today, max_value=today)
+            enote = st.text_input('Observação', value=record['note'] or '')
+            if st.form_submit_button('Guardar correção do pagamento', type='primary'):
                 try:
-                    candidate = pd.read_csv(uploaded, encoding='utf-8-sig', sep=None, engine='python').fillna('')
-                    must_have = {'nome','mes','valor'}
-                    if not must_have.issubset(candidate.columns):
-                        st.error('O CSV deve conter as colunas nome, mes e valor.')
-                    else:
-                        candidate.insert(0, 'importar', True)
-                        st.caption('Podes desmarcar as linhas que não conseguiste verificar. A operação ignora duplicados anteriormente importados da fotografia.')
-                        edited = st.data_editor(candidate, hide_index=True, use_container_width=True, num_rows='fixed', height=400,
-                                                column_config={'importar': st.column_config.CheckboxColumn('Confirmado?'),
-                                                               'nome': st.column_config.TextColumn('Nome'),
-                                                               'mes': st.column_config.NumberColumn('Mês'),
-                                                               'valor': st.column_config.NumberColumn('XOF')})
-                        approve = st.checkbox('Conferi as marcas com os registos originais; autorizo que os selecionados entrem nas contas.', key='confirm_hist')
-                        if st.button('Importar pagamentos selecionados de 2026', type='primary', disabled=not approve):
-                            chosen = edited[edited['importar']].to_dict('records')
-                            added, skipped = import_photo_payments(engine, chosen, year=2026)
-                            reload_ok(f'Fotografia: {added} pagamentos importados, {skipped} ignorados/duplicados. Confirma também os nomes e as mensalidades em falta.')
-                except Exception as exc:
-                    st.error(f'Não foi possível interpretar o CSV: {exc}')
-            pending_marks = [r for r in photo_rows if r['year'] == 2026 and r['status'] == 'pendente']
-            st.subheader(f'Marcas fotografadas por confirmar: {len(pending_marks)}')
-            if pending_marks:
-                with st.form('approve_photo_marks'):
-                    names = {m['id']:m['name'] for m in member_rows}
-                    candidates = pd.DataFrame([{'Confirmar': False, 'ID': x['id'], 'Associado': names.get(x['member_id'], '—'),
-                                                 'Mês': MONTHS[x['month']-1], 'Valor (XOF)': x['amount']}
-                                                for x in sorted(pending_marks, key=lambda r:(names.get(r['member_id'],''), r['month']))])
-                    reviewed = st.data_editor(candidates, hide_index=True, use_container_width=True,
-                                              disabled=['ID','Associado','Mês','Valor (XOF)'],
-                                              column_config={'Confirmar':st.column_config.CheckboxColumn('Conferido?')})
-                    confirmed_photo = st.checkbox('Conferi os registos selecionados e confirmo que estes pagamentos foram recebidos.')
-                    if st.form_submit_button('Confirmar mensalidades selecionadas', type='primary'):
-                        picked = reviewed[reviewed['Confirmar']]
-                        if not confirmed_photo or picked.empty:
-                            st.error('Seleciona os pagamentos e confirma a conferência.')
-                        else:
-                            for mark_id in picked['ID']:
-                                entry = next(p for p in pending_marks if p['id']==mark_id)
-                                resolve_photo_mark(engine, entry['member_id'], 2026, entry['month'], True)
-                            reload_ok(f'{len(picked)} mensalidades conferidas; recebimentos integrados na tesouraria.')
-            if pending_marks:
-                st.markdown('**Rejeitar uma marca errada da fotografia**')
-                reject_map = {r['id']:r for r in pending_marks}
-                to_reject = st.selectbox('Marca a rejeitar', list(reject_map),
-                    format_func=lambda k: f"{names.get(reject_map[k]['member_id'], '—')} · {MONTHS[reject_map[k]['month']-1]}", key='reject_photo')
-                check_reject = st.checkbox('Confirmei que esta marca não representa uma mensalidade paga', key='check_reject')
-                if st.button('Rejeitar apenas esta marca', disabled=not check_reject):
-                    r = reject_map[to_reject]
-                    resolve_photo_mark(engine, r['member_id'], 2026, r['month'], False)
-                    reload_ok('Marca rejeitada; permanece no histórico sem afetar o saldo de caixa.')
-            st.info('As marcas ✓? estão disponíveis na grelha pública, mas NÃO são ainda dinheiro registado. O financeiro confirma as corretas ou rejeita individualmente as erradas.')
-
-    with management[5]:
-        st.subheader(f'Regras para {view_year}')
-        with st.form('year_cfg'):
-            c1,c2 = st.columns(2)
-            q = c1.number_input('Mensalidade mensal (XOF)', min_value=1, value=int(cfg['monthly_fee']), step=500)
-            f = c2.number_input('Multa por chegada tardia a cada treino (XOF)', min_value=0, value=int(cfg['late_fee']), step=100)
-            verified = st.checkbox('Conferi o histórico deste ano e autorizo publicar as contas como verificadas',
-                                   value=bool(cfg['verified']))
-            if st.form_submit_button('Guardar regras do ano', type='primary'):
-                update_year(engine, view_year, q, f, cfg['due_day'], verified)
-                reload_ok(f'Regras financeiras de {view_year} guardadas.')
-        st.warning('Alterar a mensalidade recalcula as quotas em dívida do ano escolhido. A multa por atraso só afeta novos registos de treino; os já registados mantêm o valor histórico.')
-        st.subheader('Exportação / cópia dos dados')
-        export_types = ['membros','pagamentos','despesas','outras_receitas','treinos_multas','aluguer','plano_aluguer','auditoria']
-        if photo_ok:
-            export_types.append('marcas_foto')
-        for typ in export_types:
-            st.download_button(f'Descarregar {typ.replace("_", " ")} (CSV)', csv_export(engine, typ),
-                               file_name=f'{typ}_amigos.csv', mime='text/csv', key=f'csv_{typ}')
-        st.caption('Estes ficheiros são cópias dos dados; é aconselhável descarregá-los periodicamente.')
-        st.caption('Se a aplicação estiver no Streamlit Community Cloud, usa PostgreSQL externo (DATABASE_URL). Uma base SQLite local poderá ser perdida numa reinicialização/reinstalação.')
-
-    with management[6]:
-        st.subheader('Eliminar lançamentos errados')
-        st.warning('Uma eliminação é definitiva. Para corrigir um montante, elimina o lançamento errado e regista-o novamente.')
-        movements = transaction_listing(pay_rows, expense_rows, income_rows, member_rows, attendance_rows=training_rows, rent_rows=rent_rows)
-        if movements.empty:
-            st.info('Não existem movimentos para corrigir.')
-        else:
-            choices = movements.to_dict('records')
-            idx = st.selectbox('Escolher movimento', list(range(len(choices))),
-                               format_func=lambda i: (f"{choices[i]['Tipo']} · #{choices[i]['ID']} · "
-                                                      f"{choices[i]['Nome / descrição']} · "
-                                                      f"{xof(choices[i]['Entrada'] or choices[i]['Saída'])}"))
-            chosen = choices[idx]
-            if chosen['classe'] == 'multa':
-                st.info('As multas recebidas pertencem ao registo de treino e não podem ser apagadas neste ecrã. A correção exige reconciliação contabilística.')
-            st.write({'Tipo': chosen['Tipo'], 'Data': chosen['Data'], 'Descrição': chosen['Detalhe'],
-                      'Entrada': xof(chosen['Entrada']), 'Saída': xof(chosen['Saída'])})
-            if st.checkbox('Confirmo que este lançamento foi registado incorretamente', key=f'del_{chosen["classe"]}_{chosen["ID"]}'):
-                if st.button('Eliminar este lançamento', type='primary', disabled=chosen['classe'] == 'multa'):
-                    delete_record(engine, chosen['classe'], chosen['ID'])
-                    reload_ok('Lançamento eliminado. O saldo foi recalculado.')
-
-    with management[7]:
-        st.subheader(f'🏟️ Mensalidade do pavilhão · {view_year}')
-        st.caption('Este painel é separado das despesas de equipamentos, para poderes controlar quais os meses de campo que já foram pagos.')
-        with st.form('rent_settings'):
-            rent_amount = st.number_input('Valor previsto de aluguer por mês (XOF)', min_value=0, step=500,
-                                           value=int(rent_cfg['monthly_rent']))
-            rent_note = st.text_input('Notas do contrato / responsável do pavilhão', value=rent_cfg.get('note',''))
-            if st.form_submit_button('Guardar mensalidade do espaço'):
-                set_rent_plan(engine, view_year, rent_amount, rent_note)
-                reload_ok('Valor do aluguer mensal configurado.')
-        st.divider()
-        rent_table = pd.DataFrame(rent_months)
-        rent_table['Mês'] = rent_table['Mês'].map(lambda m: MONTHS[m-1])
-        st.dataframe(rent_table, hide_index=True, use_container_width=True)
-        with st.form('new_rent_payment', clear_on_submit=False):
-            st.markdown('**Registar pagamento ao pavilhão**')
-            rent_m = st.selectbox('Mês de utilização', range(1,13), index=max(0,today.month-1),
-                                   format_func=lambda m: MONTHS[m-1], key='rent_month_edit')
-            chosen = rent_months[rent_m-1]
-            still_due = max(chosen['Previsto'] - chosen['Pago'], 0)
-            rent_paid = st.number_input('Montante efetivamente pago (XOF)', min_value=1, step=500,
-                                         value=int(still_due if still_due else (rent_cfg['monthly_rent'] or 3500)))
-            rental_paid_on = st.date_input('Data real do pagamento', value=today, max_value=today, key='rent_payment_date')
-            rental_note = st.text_input('Observação / comprovativo', placeholder='Ex.: recibo de setembro, pagamento em numerário')
-            if st.form_submit_button('Guardar pagamento do campo', type='primary'):
-                try:
-                    add_rent_payment(engine, view_year, rent_m, rent_paid, rental_paid_on, rental_note)
-                    reload_ok('Pagamento do pavilhão registado: entra nas despesas e atualiza o mês de referência.')
+                    update_payment(engine, p_edit_id, emember, eyear, emonth, ev, ereceived, enote)
+                    reload_ok('Lançamento corrigido. Mensalidades e saldos recalculados.')
                 except ValueError as exc:
                     st.error(str(exc))
-        st.caption('Se o campo for pago em parcelas, regista cada pagamento separadamente. Para corrigir um erro, usa «Corrigir movimentos».')
+    st.caption('Permite pagamentos parciais e antecipados. A mensalidade não tem multa de atraso. '
+               'As multas de chegada tardia são registadas no separador «Treinos e multas».')
+
+if st.session_state.auth and page == ADMIN_PAGES[1]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[1])
+    st.subheader('Registar presença e multa por atraso')
+    st.caption('O estado é calculado automaticamente: depois de 20h15 à quarta ou 08h15 ao domingo '
+               'cobra-se a multa configurada para esse ano, por cada atraso. Se não pagar no dia, não está autorizado a treinar.')
+    member_by_id = {m['id']: m for m in member_rows}
+    if member_by_id:
+        training_date = st.date_input('Data do treino', value=today, max_value=today, key='training_date')
+        if training_date.weekday() not in (2, 6):
+            st.warning('Escolhe uma quarta-feira ou um domingo para registar a presença.')
+        with st.form('training_entry', clear_on_submit=False):
+            c1, c2 = st.columns(2)
+            member_id = c1.selectbox('Associado', list(sorted(member_by_id, key=lambda k: member_by_id[k]['name'])),
+                                     format_func=lambda i: member_by_id[i]['name'], key='training_member')
+            training_status = c2.selectbox('Comparência', ['Presente', 'Falta'])
+            arrival_at = st.time_input('Hora de chegada (se presente)', value=time(8, 0) if training_date.weekday() == 6 else time(20, 0), step=60, key=f'arrival_{training_date}')
+            paid_fine = st.checkbox('Multa recebida integralmente (caso se aplique)', value=False)
+            payment_day = st.date_input('Data efetiva do recebimento', value=today, max_value=today)
+            training_note = st.text_input('Observações do treino', placeholder='Ex.: atraso após o horário limite')
+            if st.form_submit_button('Guardar registo do treino', type='primary'):
+                try:
+                    _, limit = session_times(training_date)
+                    is_late = training_status == 'Presente' and arrival_at > limit
+                    if paid_fine and not is_late:
+                        st.error('O associado não tem multa neste treino. Desmarca «Multa recebida».')
+                    else:
+                        due = add_attendance(
+                            engine, member_id, training_date, training_status,
+                            arrived_at if training_status == 'Presente' else None,
+                            int(get_year_settings(engine, training_date.year)['late_fee']),
+                            paid=paid_fine, paid_on=payment_day if paid_fine else None,
+                            note=training_note,
+                        )
+                        if due:
+                            outcome = 'multa recebida' if paid_fine and payment_day == training_date else (
+                                'multa liquidada fora do dia' if paid_fine else 'multa por cobrar; não treina')
+                        else:
+                            outcome = 'sem multa'
+                        reload_ok(f'Registo guardado: {outcome}.')
+                except ValueError as exc:
+                    st.error(str(exc))
+    st.divider()
+    st.subheader('Regularizar multas pendentes')
+    pending = sorted([r for r in training_rows if r['fine_due'] > r['fine_paid']],
+                     key=lambda r: r['session_on'], reverse=True)
+    if not pending:
+        st.success('Não há multas pendentes de pagamento.')
+    else:
+        with st.form('pay_training_fine'):
+            pending_map = {r['id']: r for r in pending}
+            rid = st.selectbox('Multa a liquidar', list(pending_map), format_func=lambda i:
+                               f"{member_by_id[pending_map[i]['member_id']]['name']} · "
+                               f"{pending_map[i]['session_on'].strftime('%d/%m/%Y')} · "
+                               f"{xof(pending_map[i]['fine_due'] - pending_map[i]['fine_paid'])}")
+            received_at = st.date_input('Quando foi efetivamente recebida a multa?', value=today, max_value=today,
+                                        key='fine_payment_date')
+            if st.form_submit_button('Confirmar recebimento', type='primary'):
+                try:
+                    pay_attendance_fine(engine, rid, received_at)
+                    reload_ok('Multa paga e recebimento incluído nas contas do grupo.')
+                except ValueError as exc:
+                    st.error(str(exc))
+    st.divider()
+    st.subheader('Corrigir presença registada por engano')
+    st.caption('Só é possível apagar presenças sem multa recebida. Assim, um recebimento não desaparece das contas.')
+    if training_rows:
+        recent_entries = sorted(training_rows, key=lambda r: (r['session_on'], r['id']), reverse=True)[:300]
+        recent_map = {r['id']: r for r in recent_entries}
+        rid_bad = st.selectbox('Registo a corrigir', list(recent_map), format_func=lambda i:
+                               f"{recent_map[i]['session_on'].strftime('%d/%m/%Y')} · "
+                               f"{member_by_id.get(recent_map[i]['member_id'], {}).get('name', '—')} · "
+                               f"{arrival_outcome(recent_map[i])}", key='training_correct')
+        if st.checkbox('Confirmo que este registo de treino está errado', key='confirm_del_training'):
+            if st.button('Eliminar registo de presença incorreto'):
+                try:
+                    remove_attendance(engine, rid_bad)
+                    reload_ok('Registo corrigido. Podes voltar a introduzir a presença.')
+                except ValueError as exc:
+                    st.error(str(exc))
+
+if st.session_state.auth and page == ADMIN_PAGES[2]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[2])
+    expense_col, income_col = st.columns(2)
+    with expense_col:
+        st.subheader('Nova despesa')
+        with st.form('new_expense', clear_on_submit=True):
+            expense_day = st.date_input('Data da despesa', value=today, max_value=today)
+            category = st.selectbox('Categoria (aluguer tem separador próprio)',
+                                    [c for c in EXPENSE_CATEGORIES if c != 'Aluguer do pavilhão'])
+            what = st.text_input('Descrição / fornecedor', placeholder='Ex.: aluguer INEFD, mês de outubro')
+            expense_amount = st.number_input('Valor pago (XOF)', min_value=1, step=500, value=3500)
+            if st.form_submit_button('Guardar despesa', type='primary'):
+                add_expense(engine, expense_day, category, what, expense_amount)
+                reload_ok('Despesa registada e saldo atualizado.')
+    with income_col:
+        st.subheader('Outra receita')
+        with st.form('new_income', clear_on_submit=True):
+            income_day = st.date_input('Data do recebimento extra', value=today, max_value=today)
+            inc_category = st.selectbox('Tipo de receita', INCOME_CATEGORIES)
+            inc_desc = st.text_input('Origem / observação', placeholder='Ex.: contribuição de um patrocinador')
+            inc_amount = st.number_input('Montante da receita (XOF)', min_value=1, step=500, value=3500)
+            if st.form_submit_button('Guardar outra receita', type='primary'):
+                add_income(engine, income_day, inc_category, inc_desc, inc_amount)
+                reload_ok('Receita extraordinária registada.')
+    st.info('Para começar com dinheiro que já existe na caixa, regista-o como **Outra receita → Saldo inicial**, apenas uma vez. Nos anos seguintes o saldo transita automaticamente.')
+
+if st.session_state.auth and page == ADMIN_PAGES[3]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[3])
+    st.subheader('Associados')
+    st.dataframe(pd.DataFrame(member_rows).rename(columns={
+        'id': 'N.º', 'name':'Nome', 'start_year':'Ano entrada', 'start_month':'Mês entrada',
+        'end_year':'Ano saída', 'end_month':'Mês saída', 'needs_review':'Nome por conferir'
+    }), hide_index=True, use_container_width=True)
+    left,right = st.columns(2)
+    with left:
+        st.markdown('**Adicionar membro**')
+        with st.form('add_member', clear_on_submit=True):
+            new_name = st.text_input('Nome')
+            new_y = st.number_input('Ano de entrada', min_value=2020, max_value=2100, value=today.year)
+            new_m = st.selectbox('Mês de entrada', range(1,13), index=today.month-1, format_func=lambda i: MONTHS[i-1])
+            if st.form_submit_button('Adicionar'):
+                try:
+                    add_member(engine, new_name, new_y, new_m)
+                    reload_ok('Membro adicionado.')
+                except ValueError as exc:
+                    st.error(str(exc))
+    with right:
+        st.markdown('**Corrigir nome, entrada ou saída**')
+        if not member_by_id:
+            st.info('Adiciona primeiro um membro para poder editar a respetiva ficha.')
+            st.stop()
+        edit_id = st.selectbox('Selecionar membro', list(sorted(member_by_id)),
+                               format_func=lambda i: f"{member_by_id[i]['name']} (#{i})", key='edit_member')
+        selected = member_by_id[edit_id]
+        with st.form(f'edit_m_{edit_id}'):
+            edit_name = st.text_input('Nome oficial', value=selected['name'])
+            b1,b2 = st.columns(2)
+            from_y = b1.number_input('Ano entrada', min_value=2020,max_value=2100, value=int(selected['start_year']))
+            from_m = b2.selectbox('Mês entrada', range(1,13), index=int(selected['start_month'])-1,
+                                  format_func=lambda i: MONTHS[i-1])
+            is_left = st.checkbox('O membro deixou o grupo', value=selected['end_year'] is not None)
+            stop_y, stop_m = None, None
+            if is_left:
+                c1,c2 = st.columns(2)
+                stop_y = c1.number_input('Ano de saída', min_value=2020, max_value=2100,
+                                          value=int(selected['end_year'] or today.year))
+                stop_m = c2.selectbox('Mês de saída', range(1,13),
+                                      index=int(selected['end_month'] or today.month)-1,
+                                      format_func=lambda i: MONTHS[i-1])
+            needs_review = st.checkbox('Grafia ainda por confirmar', value=bool(selected['needs_review']))
+            if st.form_submit_button('Guardar alterações'):
+                try:
+                    change_member(engine, edit_id, edit_name, from_y, from_m, stop_y, stop_m, needs_review)
+                    reload_ok('Ficha do membro atualizada.')
+                except ValueError as exc:
+                    st.error(str(exc))
+    st.caption('A data de entrada/saída determina quais os meses com mensalidade devida. Os pagamentos antigos permanecem guardados.')
+
+if st.session_state.auth and page == ADMIN_PAGES[4]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[4])
+    if not photo_ok:
+        st.error('Conferência suspensa: a tabela photo_marks não pôde ser consultada. Os movimentos financeiros estão preservados.')
+        st.info('Consulta os logs e corrige a base de dados antes de validar as marcas antigas.')
+    else:
+        st.subheader('Fotografias do registo de 2026')
+        st.warning('Esta transcrição é uma **proposta**. Nem todas as grafias e cruzes são nítidas. Nenhum X significa falta de pagamento comprovada, e as datas dos pagamentos assinalados não são conhecidas.')
+        example_path = Path(__file__).parent / 'historico_foto_2026_para_validar.csv'
+        if example_path.exists():
+            st.download_button('Descarregar proposta de transcrição (CSV)', example_path.read_bytes(),
+                               file_name=example_path.name, mime='text/csv')
+        uploaded = st.file_uploader('Carregar CSV da proposta ou ficheiro corrigido', type=['csv'], key='historical_upload')
+        if uploaded is not None:
+            try:
+                candidate = pd.read_csv(uploaded, encoding='utf-8-sig', sep=None, engine='python').fillna('')
+                must_have = {'nome','mes','valor'}
+                if not must_have.issubset(candidate.columns):
+                    st.error('O CSV deve conter as colunas nome, mes e valor.')
+                else:
+                    candidate.insert(0, 'importar', True)
+                    st.caption('Podes desmarcar as linhas que não conseguiste verificar. A operação ignora duplicados anteriormente importados da fotografia.')
+                    edited = st.data_editor(candidate, hide_index=True, use_container_width=True, num_rows='fixed', height=400,
+                                            column_config={'importar': st.column_config.CheckboxColumn('Confirmado?'),
+                                                           'nome': st.column_config.TextColumn('Nome'),
+                                                           'mes': st.column_config.NumberColumn('Mês'),
+                                                           'valor': st.column_config.NumberColumn('XOF')})
+                    approve = st.checkbox('Conferi as marcas com os registos originais; autorizo que os selecionados entrem nas contas.', key='confirm_hist')
+                    if st.button('Importar pagamentos selecionados de 2026', type='primary', disabled=not approve):
+                        chosen = edited[edited['importar']].to_dict('records')
+                        added, skipped = import_photo_payments(engine, chosen, year=2026)
+                        reload_ok(f'Fotografia: {added} pagamentos importados, {skipped} ignorados/duplicados. Confirma também os nomes e as mensalidades em falta.')
+            except Exception as exc:
+                st.error(f'Não foi possível interpretar o CSV: {exc}')
+        pending_marks = [r for r in photo_rows if r['year'] == 2026 and r['status'] == 'pendente']
+        st.subheader(f'Marcas fotografadas por confirmar: {len(pending_marks)}')
+        if pending_marks:
+            with st.form('approve_photo_marks'):
+                names = {m['id']:m['name'] for m in member_rows}
+                candidates = pd.DataFrame([{'Confirmar': False, 'ID': x['id'], 'Associado': names.get(x['member_id'], '—'),
+                                             'Mês': MONTHS[x['month']-1], 'Valor (XOF)': x['amount']}
+                                            for x in sorted(pending_marks, key=lambda r:(names.get(r['member_id'],''), r['month']))])
+                reviewed = st.data_editor(candidates, hide_index=True, use_container_width=True,
+                                          disabled=['ID','Associado','Mês','Valor (XOF)'],
+                                          column_config={'Confirmar':st.column_config.CheckboxColumn('Conferido?')})
+                confirmed_photo = st.checkbox('Conferi os registos selecionados e confirmo que estes pagamentos foram recebidos.')
+                if st.form_submit_button('Confirmar mensalidades selecionadas', type='primary'):
+                    picked = reviewed[reviewed['Confirmar']]
+                    if not confirmed_photo or picked.empty:
+                        st.error('Seleciona os pagamentos e confirma a conferência.')
+                    else:
+                        for mark_id in picked['ID']:
+                            entry = next(p for p in pending_marks if p['id']==mark_id)
+                            resolve_photo_mark(engine, entry['member_id'], 2026, entry['month'], True)
+                        reload_ok(f'{len(picked)} mensalidades conferidas; recebimentos integrados na tesouraria.')
+        if pending_marks:
+            st.markdown('**Rejeitar uma marca errada da fotografia**')
+            reject_map = {r['id']:r for r in pending_marks}
+            to_reject = st.selectbox('Marca a rejeitar', list(reject_map),
+                format_func=lambda k: f"{names.get(reject_map[k]['member_id'], '—')} · {MONTHS[reject_map[k]['month']-1]}", key='reject_photo')
+            check_reject = st.checkbox('Confirmei que esta marca não representa uma mensalidade paga', key='check_reject')
+            if st.button('Rejeitar apenas esta marca', disabled=not check_reject):
+                r = reject_map[to_reject]
+                resolve_photo_mark(engine, r['member_id'], 2026, r['month'], False)
+                reload_ok('Marca rejeitada; permanece no histórico sem afetar o saldo de caixa.')
+        st.info('As marcas ✓? estão disponíveis na grelha pública, mas NÃO são ainda dinheiro registado. O financeiro confirma as corretas ou rejeita individualmente as erradas.')
+
+if st.session_state.auth and page == ADMIN_PAGES[5]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[5])
+    st.subheader(f'Regras para {view_year}')
+    with st.form('year_cfg'):
+        c1,c2 = st.columns(2)
+        q = c1.number_input('Mensalidade mensal (XOF)', min_value=1, value=int(cfg['monthly_fee']), step=500)
+        f = c2.number_input('Multa por chegada tardia a cada treino (XOF)', min_value=0, value=int(cfg['late_fee']), step=100)
+        verified = st.checkbox('Conferi o histórico deste ano e autorizo publicar as contas como verificadas',
+                               value=bool(cfg['verified']))
+        if st.form_submit_button('Guardar regras do ano', type='primary'):
+            update_year(engine, view_year, q, f, cfg['due_day'], verified)
+            reload_ok(f'Regras financeiras de {view_year} guardadas.')
+    st.warning('Alterar a mensalidade recalcula as quotas em dívida do ano escolhido. A multa por atraso só afeta novos registos de treino; os já registados mantêm o valor histórico.')
+    st.subheader('Exportação / cópia dos dados')
+    export_types = ['membros','pagamentos','despesas','outras_receitas','treinos_multas','aluguer','plano_aluguer','auditoria']
+    if photo_ok:
+        export_types.append('marcas_foto')
+    for typ in export_types:
+        st.download_button(f'Descarregar {typ.replace("_", " ")} (CSV)', csv_export(engine, typ),
+                           file_name=f'{typ}_amigos.csv', mime='text/csv', key=f'csv_{typ}')
+    st.caption('Estes ficheiros são cópias dos dados; é aconselhável descarregá-los periodicamente.')
+    st.caption('Se a aplicação estiver no Streamlit Community Cloud, usa PostgreSQL externo (DATABASE_URL). Uma base SQLite local poderá ser perdida numa reinicialização/reinstalação.')
+
+if st.session_state.auth and page == ADMIN_PAGES[6]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[6])
+    st.subheader('Eliminar lançamentos errados')
+    st.warning('Uma eliminação é definitiva. Para corrigir um montante, elimina o lançamento errado e regista-o novamente.')
+    movements = transaction_listing(pay_rows, expense_rows, income_rows, member_rows, attendance_rows=training_rows, rent_rows=rent_rows)
+    if movements.empty:
+        st.info('Não existem movimentos para corrigir.')
+    else:
+        choices = movements.to_dict('records')
+        idx = st.selectbox('Escolher movimento', list(range(len(choices))),
+                           format_func=lambda i: (f"{choices[i]['Tipo']} · #{choices[i]['ID']} · "
+                                                  f"{choices[i]['Nome / descrição']} · "
+                                                  f"{xof(choices[i]['Entrada'] or choices[i]['Saída'])}"))
+        chosen = choices[idx]
+        if chosen['classe'] == 'multa':
+            st.info('As multas recebidas pertencem ao registo de treino e não podem ser apagadas neste ecrã. A correção exige reconciliação contabilística.')
+        st.write({'Tipo': chosen['Tipo'], 'Data': chosen['Data'], 'Descrição': chosen['Detalhe'],
+                  'Entrada': xof(chosen['Entrada']), 'Saída': xof(chosen['Saída'])})
+        if st.checkbox('Confirmo que este lançamento foi registado incorretamente', key=f'del_{chosen["classe"]}_{chosen["ID"]}'):
+            if st.button('Eliminar este lançamento', type='primary', disabled=chosen['classe'] == 'multa'):
+                delete_record(engine, chosen['classe'], chosen['ID'])
+                reload_ok('Lançamento eliminado. O saldo foi recalculado.')
+
+if st.session_state.auth and page == ADMIN_PAGES[7]:
+    st.caption(f'⚽ Amigos de Amigos · Área do financeiro · {view_year}')
+    st.header(ADMIN_PAGES[7])
+    st.subheader(f'🏟️ Mensalidade do pavilhão · {view_year}')
+    st.caption('Este painel é separado das despesas de equipamentos, para poderes controlar quais os meses de campo que já foram pagos.')
+    with st.form('rent_settings'):
+        rent_amount = st.number_input('Valor previsto de aluguer por mês (XOF)', min_value=0, step=500,
+                                       value=int(rent_cfg['monthly_rent']))
+        rent_note = st.text_input('Notas do contrato / responsável do pavilhão', value=rent_cfg.get('note',''))
+        if st.form_submit_button('Guardar mensalidade do espaço'):
+            set_rent_plan(engine, view_year, rent_amount, rent_note)
+            reload_ok('Valor do aluguer mensal configurado.')
+    st.divider()
+    rent_table = pd.DataFrame(rent_months)
+    rent_table['Mês'] = rent_table['Mês'].map(lambda m: MONTHS[m-1])
+    st.dataframe(rent_table, hide_index=True, use_container_width=True)
+    with st.form('new_rent_payment', clear_on_submit=False):
+        st.markdown('**Registar pagamento ao pavilhão**')
+        rent_m = st.selectbox('Mês de utilização', range(1,13), index=max(0,today.month-1),
+                               format_func=lambda m: MONTHS[m-1], key='rent_month_edit')
+        chosen = rent_months[rent_m-1]
+        still_due = max(chosen['Previsto'] - chosen['Pago'], 0)
+        rent_paid = st.number_input('Montante efetivamente pago (XOF)', min_value=1, step=500,
+                                     value=int(still_due if still_due else (rent_cfg['monthly_rent'] or 3500)))
+        rental_paid_on = st.date_input('Data real do pagamento', value=today, max_value=today, key='rent_payment_date')
+        rental_note = st.text_input('Observação / comprovativo', placeholder='Ex.: recibo de setembro, pagamento em numerário')
+        if st.form_submit_button('Guardar pagamento do campo', type='primary'):
+            try:
+                add_rent_payment(engine, view_year, rent_m, rent_paid, rental_paid_on, rental_note)
+                reload_ok('Pagamento do pavilhão registado: entra nas despesas e atualiza o mês de referência.')
+            except ValueError as exc:
+                st.error(str(exc))
+    st.caption('Se o campo for pago em parcelas, regista cada pagamento separadamente. Para corrigir um erro, usa «Corrigir movimentos».')
 
 st.markdown('---')
 st.caption('Amigos de Amigos · Presidente: Deoclecio Jayrson Ferreira Marinho · Gestão restrita ao financeiro')

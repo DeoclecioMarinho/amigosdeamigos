@@ -1,7 +1,7 @@
 """Persistência multi-ano: SQLite local ou PostgreSQL gerido, via SQLAlchemy."""
 from __future__ import annotations
 
-APP_COMPAT_VERSION = '4.3'
+APP_COMPAT_VERSION = '4.4'
 
 from datetime import date, datetime, time
 import csv
