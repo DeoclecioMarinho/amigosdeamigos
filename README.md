@@ -1,90 +1,55 @@
-# ⚽ Amigos de Amigos — Sistema do grupo de futsal
+# ⚽ Amigos de Amigos — Painel completo de tesouraria (v4)
 
-Aplicação em **Streamlit** para associados e tesouraria do grupo **Amigos de Amigos** (Pavilhão do INEFD). A fotografia do grupo encontra-se em `assets/amigos_de_amigos_grupo.jpg`, aparece na página inicial e na secção «O nosso grupo». A fotografia é mantida sem alterações.
+Sistema Streamlit de futsal no Pavilhão do INEFD, com **presidente Deoclecio Jayrson Ferreira Marinho**.
 
-## O que os associados podem ver (sem iniciar sessão)
+## Iniciar o programa
 
-- Fotografia do grupo, apresentação e horários habituais.
-- Saldo acumulado, receitas (quotas, multas pagas e outras), despesas e respetivos movimentos.
-- Situação das **mensalidades de cada membro**, por mês e por ano.
-- **Presenças registadas**, chegadas tardias, multas por liquidar e multas efetivamente recebidas por treino.
-- Histórico de vários anos. Os saldos de caixa transitam automaticamente entre anos.
+1. Instalar Python 3.10+ e executar `pip install -r requirements.txt`.
+2. Executar `streamlit run app.py`.
+3. Abrir a aplicação. **A Visão geral, Mensalidades, Treinos e Multas, Finanças, O Grupo e Aluguer do Campo são públicos**.
+4. O financeiro inicia sessão na barra lateral com **utilizador `financeiro`** e **código `amgamg2026`**, já guardados no `.streamlit/secrets.toml` para a instalação local.
 
-A página pública não permite alterar pagamentos. Nota: caso a aplicação seja publicada sem autenticação geral, **a fotografia do grupo e a informação financeira tornam-se visíveis para qualquer pessoa com o endereço da aplicação**. Recomenda-se obter o acordo do grupo sobre essa publicação.
+**Segurança:** o código é provisório e foi solicitado pelo grupo. Antes de partilhar a aplicação na Internet, **trocar o código**, não publicar o ficheiro `.streamlit/secrets.toml` e configurar as credenciais na secção **Settings → Secrets** do Streamlit Cloud. O ficheiro real está no `.gitignore`.
 
-## O que o financeiro pode fazer (com palavra-passe)
+## O que está preparado
 
-- Adicionar, corrigir e desativar associados.
-- Registar mensalidades completas, parciais e antecipadas.
-- Criar o registo de cada treino regular (quarta-feira ou domingo), com nome, presença e hora de chegada; o sistema calcula automaticamente a multa aplicável.
-- Registar o recebimento de uma multa no próprio dia ou numa data posterior, mantendo a data efetiva do pagamento.
-- Registar despesas: aluguer do pavilhão, lavagem de equipamentos, bolas, apitos, coletes, bomba de ar e outras.
-- Registar outras receitas, incluindo eventual saldo inicial.
-- Exportar as tabelas e os movimentos em CSV.
-- Corrigir um registo de treino **apenas se não existir multa recebida**; as multas recebidas não podem ser apagadas sem reconciliação contabilística.
+- Fotografia **original** do grupo (1080 × 809) mostrada na página inicial e na secção «O Grupo», sem cortar participantes.
+- 33 nomes da folha fotografada (alguns com grafia por confirmar); nomes editáveis, novos membros, entrada e saída.
+- **130 marcas de mensalidades** (2026) pré-carregadas como **✓? (por confirmar)**. Estas marcas são sugestões visíveis, **não são somadas às entradas de caixa** antes da conferência do financeiro. O financeiro pode confirmar em lote as verificadas ou rejeitar as erradas.
+- Grelha janeiro–dezembro por membro para 2026 e qualquer ano futuro: **✓** pago confirmado, **✓?** marca da fotografia pendente, **◐** parcial, **·** sem confirmação, **—** não aplicável.
+- Área do financeiro para assinalar meses pagos, anular com confirmação e histórico da alteração, adicionar parciais, editar valores, datas e meses dos lançamentos.
+- Mensalidade **3 500 XOF**. Multa de **500 XOF por cada chegada tardia ao treino**, não por atraso de mensalidade. Quarta-feira treino 20h00, multa após 20h15. Domingo treino 08h00, multa após 08h15. A multa deve ser paga no próprio dia antes de treinar.
+- Dashboard de **entradas (mensalidades, multas pagas, donativos)**, **saídas (lavagens, bolas, apitos, coletes, bombas, água e outras)**, **saldo acumulado** e **resumo mês a mês por ano**.
+- **Aluguer do campo**: o financeiro configura o valor mensal do espaço para cada ano, regista cada pagamento ao pavilhão com mês de referência e data real e consulta o quadro mensal **pago, parcial, por pagar ou ainda a vencer**. Os montantes pagos entram automaticamente como despesas.
+- Histórico de 2026 em diante, com saldo a transitar de um ano para o seguinte. CSV para exportação de membros, movimentos, multas, marcações da fotografia, aluguer e auditoria.
 
-## Regras do grupo (versão atual)
+## Importante para ler o dashboard
 
-| Regra | Aplicação |
-|---|---|
-| Mensalidade | **3 500 XOF por mês** |
-| Multa | **500 XOF por cada chegada tardia a um treino** |
-| Quarta-feira | Treino às **20h00**; chegada até **20h15**, inclusive, sem multa |
-| Domingo | Treino às **08h00**; chegada até **08h15**, inclusive, sem multa |
-| Depois da tolerância | Multa de 500 XOF para o treino em causa |
-| Pagamento da multa | Deve ser feito **no próprio dia, antes de treinar**. Enquanto estiver pendente, a aplicação mostra «não treina». |
-| Atraso na mensalidade | **Não gera multa de treino**; é registado apenas como quota por pagar. |
+1. A fotografia fornece um **pré-registo sujeito a validação**. O sistema não sabe a data real desses recebimentos nem confirma se todas as marcas representam pagamentos. O financeiro deve consultar os comprovativos originais.
+2. Ao validar uma marca histórica sem data conhecida, o valor é contabilizado no **mês da mensalidade**, por aproximação apenas para o gráfico. Na **caixa acumulada** o montante é contado uma única vez.
+3. Não há dados anteriores de **despesas, aluguer ou multas**, pois não foram fornecidos. O financeiro terá de os introduzir. **Não foi inventado qualquer montante pago ao pavilhão.**
+4. Para anos futuros o valor da mensalidade e das multas pode ser ajustado em «Regras e exportação». O valor do aluguer é configurado na área «Aluguer do campo».
+5. Se o grupo já tem dinheiro em caixa anterior ao período registado, utilizar uma só vez «Outra receita → Saldo inicial».
+6. Os pagamentos de aluguer devem ser registados no separador dedicado. As despesas com equipamentos são registadas separadamente, para não duplicar valores de aluguer.
 
-O sistema **não presume faltas** dos associados sem registo de presença. A multa por atraso é calculada individualmente, por data e hora de chegada, e só entra na caixa quando o pagamento é registado. O valor de multa e da mensalidade pode ser configurado por ano. Registos históricos conservam os montantes originais.
+## Publicar online sem perder a base de dados
 
-## Instalação local
+Para produção no **Streamlit Community Cloud**, usar uma base de dados PostgreSQL gerida (ex.: Neon ou Supabase). A SQLite local serve apenas para testar; os ficheiros podem desaparecer após uma reinicialização do Community Cloud.
 
-Requer **Python 3.10 ou superior**. Na pasta da aplicação:
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Para permitir gestão financeira, cria `.streamlit/secrets.toml` a partir de `.streamlit/secrets.toml.example` e preenche:
+Colocar o código no GitHub SEM `.streamlit/secrets.toml` e SEM `data/*.db`; configurar nos segredos do Streamlit Cloud:
 
 ```toml
-FINANCE_PASSWORD = "PALAVRA_PASSE_FORTE_AQUI"
+FINANCE_USERNAME = "financeiro"
+FINANCE_PASSWORD = "ALTERAR_PARA_UM_CODIGO_FORTE"
+DATABASE_URL = "postgresql://utilizador:senha@host:5432/base?sslmode=require"
 ```
 
-Sem password a aplicação só permite consulta. Em ambiente local os dados são guardados no ficheiro `data/amigos.db` (SQLite). **Faz cópias de segurança regularmente.**
-
-## Publicar no Streamlit Community Cloud
-
-1. Coloca os ficheiros no GitHub, incluindo `assets/amigos_de_amigos_grupo.jpg` e excluindo `.streamlit/secrets.toml` e ficheiros `.db`.
-2. Publica `app.py` no Streamlit Community Cloud.
-3. Configura uma base PostgreSQL externa persistente (por exemplo, Neon ou Supabase). Usa a URL de ligação disponibilizada pelo serviço, não o URL do painel.
-4. Em *Settings → Secrets*, define:
-
-```toml
-FINANCE_PASSWORD = "PALAVRA_PASSE_FORTE_AQUI"
-DATABASE_URL = "postgresql://UTILIZADOR:SENHA@HOST:5432/BASE?sslmode=require"
-```
-
-**Não uses SQLite como armazenamento definitivo no Streamlit Community Cloud**: os ficheiros locais podem perder-se em reinicializações e recriações da aplicação. Não publiques as credenciais no GitHub.
-
-## Importação da folha histórica de 2026
-
-- Foram identificados 33 nomes provisórios nas fotografias da lista de pagamentos; alguns precisam de confirmação.
-- `historico_foto_2026_para_validar.csv` contém marcações transcritas de forma **aproximada**. O ficheiro **não é importado automaticamente**.
-- O financeiro deve corrigir os nomes, validar cada marca, importar apenas os pagamentos confirmados e inserir eventuais pagamentos/despesas que faltem.
-- Datas de recebimento desconhecidas são tratadas como aproximações para consulta histórica, sem inventar uma data exata.
-- A fotografia do grupo é apenas para apresentação, **não é usada para identificar automaticamente pessoas nem associar rostos a nomes**.
+Nota de privacidade: o painel público expõe nomes, dívidas e fotografia dos jogadores a quem tenha o endereço da aplicação. Recomenda-se acordo expresso do grupo ou um controlo de acesso de leitura se necessário.
 
 ## Testes
 
-Para verificar regras financeiras e multas:
-
 ```bash
-pip install pytest
 python -m pytest -q
 ```
 
-## Notas sobre segurança e utilização
-
-O login usa uma palavra-passe única para o financeiro. Não existe autenticação individual nem auditoria detalhada de quem alterou cada lançamento. Esta é uma aplicação simples para tesouraria de um grupo; pagamentos contestados ou correções de multas já liquidadas devem ser reconciliados antes de alterar a base de dados. Recomenda-se nomear o financeiro principal e um substituto para conferir periodicamente o saldo e os comprovativos.
+Os testes cobrem as regras de quota, limite de atraso nos treinos, receitas de multas, meses de campo, correções de mensalidades e histórico de 2026. A interface Streamlit precisa de confirmação visual depois de instalada.

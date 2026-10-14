@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+import csv
 from pathlib import Path
 import os
 
@@ -72,6 +73,49 @@ waivers = Table(
     UniqueConstraint('member_id', 'year', 'month', name='uq_waiver_period'),
 )
 
+# Pagamentos do aluguer identificados pelo ANO/MÊS de utilização do pavilhão.
+# São despesas efetivas apenas quando pagos; a obrigação é configurada por ano.
+rent_plans = Table(
+    'rent_plans', MD,
+    Column('year', Integer, primary_key=True),
+    Column('monthly_rent', Integer, nullable=False, default=0),
+    Column('note', String(250), nullable=False, default=''),
+)
+rent_payments = Table(
+    'rent_payments', MD,
+    Column('id', Integer, primary_key=True),
+    Column('year', Integer, nullable=False),
+    Column('month', Integer, nullable=False),
+    Column('amount', Integer, nullable=False),
+    Column('paid_on', Date, nullable=False),
+    Column('note', String(250), nullable=False, default=''),
+    Column('created_at', DateTime, nullable=False, default=datetime.utcnow),
+)
+# Registo de correções da tesouraria. Não é uma contabilidade auditada; preserva
+# ao menos o evento de uma alteração/remoção feita a partir do ecrã.
+audit_log = Table(
+    'audit_log', MD,
+    Column('id', Integer, primary_key=True),
+    Column('changed_at', DateTime, nullable=False, default=datetime.utcnow),
+    Column('actor', String(100), nullable=False, default='financeiro'),
+    Column('event', String(100), nullable=False),
+    Column('details', String(500), nullable=False, default=''),
+)
+
+# Marcas identificadas na fotografia original. NUNCA são dinheiro recebido
+# até que o financeiro confirme manualmente cada marca. Registos recusados
+# conservam-se para não reaparecerem após reiniciar a aplicação.
+photo_marks = Table(
+    'photo_marks', MD,
+    Column('id', Integer, primary_key=True),
+    Column('member_id', Integer, ForeignKey('members.id'), nullable=False),
+    Column('year', Integer, nullable=False),
+    Column('month', Integer, nullable=False),
+    Column('amount', Integer, nullable=False),
+    Column('status', String(16), nullable=False, default='pendente'),
+    UniqueConstraint('member_id', 'year', 'month', name='uq_photo_member_month'),
+)
+
 # Cada associado tem no máximo um registo por treino. Não se presumem faltas
 # para membros sem registo de presença.
 attendance = Table(
@@ -129,6 +173,26 @@ def init_db(engine):
             ])
         if not conn.execute(select(settings.c.year).where(settings.c.year == 2026)).first():
             conn.execute(insert(settings).values(year=2026, monthly_fee=3500, late_fee=500, due_day=10, verified=False))
+
+        # Semente apenas uma vez. Idempotente na base já utilizada (SQLite/PostgreSQL).
+        # As marcas NÃO entram em payments e não geram receita nem saldo.
+        csv_path = BASE / 'historico_foto_2026_para_validar.csv'
+        if csv_path.exists() and not conn.execute(select(photo_marks.c.id).limit(1)).first():
+            ids = {r['name'].strip().upper(): r['id'] for r in
+                   conn.execute(select(members.c.id, members.c.name)).mappings()}
+            with csv_path.open(encoding='utf-8-sig', newline='') as fh:
+                seen = set()
+                new_rows = []
+                for r in csv.DictReader(fh):
+                    key = (r['nome'].strip().upper(), int(r['mes']))
+                    if key in seen or key[0] not in ids or not 1 <= key[1] <= 12:
+                        continue
+                    seen.add(key)
+                    new_rows.append(dict(member_id=ids[key[0]], year=2026,
+                                         month=key[1], amount=int(r['valor']),
+                                         status='pendente'))
+                if new_rows:
+                    conn.execute(insert(photo_marks), new_rows)
 
 
 def get_rows(engine, table):
@@ -226,15 +290,20 @@ def set_waiver(engine, member_id, year, month, waive, reason=''):
 
 
 def delete_record(engine, typ, record_id):
-    tables = {'pagamento': payments, 'despesa': expenses, 'receita': incomes}
+    tables = {'pagamento': payments, 'despesa': expenses, 'receita': incomes, 'aluguer': rent_payments}
     if typ not in tables:
         raise ValueError('Tipo inválido')
     with engine.begin() as conn:
+        previous = conn.execute(select(tables[typ]).where(tables[typ].c.id == int(record_id))).mappings().first()
+        if not previous:
+            raise ValueError('Lançamento inexistente')
         conn.execute(delete(tables[typ]).where(tables[typ].c.id == int(record_id)))
+        conn.execute(insert(audit_log).values(event='ELIMINAR_'+typ.upper(),
+                    details=f'id={record_id}; anterior={dict(previous)}'[:500]))
 
 
 def csv_export(engine, typ):
-    tables = {'membros': members, 'pagamentos': payments, 'despesas': expenses, 'outras_receitas': incomes, 'dispensas_multa': waivers, 'treinos_multas': attendance}
+    tables = {'membros': members, 'pagamentos': payments, 'despesas': expenses, 'outras_receitas': incomes, 'dispensas_multa': waivers, 'treinos_multas': attendance, 'marcas_foto': photo_marks, 'aluguer': rent_payments, 'plano_aluguer': rent_plans, 'auditoria': audit_log}
     return pd.DataFrame(get_rows(engine, tables[typ])).to_csv(index=False).encode('utf-8-sig')
 
 
@@ -251,20 +320,99 @@ def import_photo_payments(engine, rows, year=2026):
             if not mid or not (1 <= month <= 12) or amount <= 0:
                 skipped += 1
                 continue
-            prior = conn.execute(select(payments.c.id).where(
+            prior = conn.execute(select(payments.c.amount).where(
                 (payments.c.member_id == mid) & (payments.c.year == int(year)) &
-                (payments.c.month == month) & (payments.c.origin == 'foto_2026')
-            )).first()
-            if prior:
+                (payments.c.month == month)
+            )).scalars().all()
+            missing = max(0, amount - sum(prior))
+            if not missing:
                 skipped += 1
                 continue
             conn.execute(insert(payments).values(
                 member_id=mid, year=int(year), month=month,
-                amount=amount, paid_on=None,
-                origin='foto_2026', note='Marca na fotografia; data não conhecida, confirmar com tesouraria',
+                amount=missing, paid_on=None,
+                origin='foto_2026', note='Fotografia conferida; data histórica desconhecida',
             ))
+            conn.execute(update(photo_marks).where(
+                (photo_marks.c.member_id == mid) & (photo_marks.c.year == int(year)) &
+                (photo_marks.c.month == month) & (photo_marks.c.status == 'pendente')
+            ).values(status='confirmada'))
             inserted += 1
     return inserted, skipped
+
+
+
+def resolve_photo_mark(engine, member_id, year, month, confirmed, paid_on=None):
+    """Confirma ou rejeita uma marca fotográfica; contabiliza só uma vez.
+
+    Se já houver recebimentos suficientes, não cria pagamentos duplicados.
+    A data None significa que o dia exato do recebimento histórico é desconhecido.
+    """
+    with engine.begin() as conn:
+        stmt = select(photo_marks).where(
+            (photo_marks.c.member_id == int(member_id)) &
+            (photo_marks.c.year == int(year)) & (photo_marks.c.month == int(month))
+        )
+        mark = conn.execute(stmt).mappings().first()
+        if not mark:
+            raise ValueError('Marca da fotografia inexistente')
+        if mark['status'] != 'pendente':
+            raise ValueError('Esta marca já foi analisada')
+        if confirmed:
+            old = conn.execute(select(payments.c.amount).where(
+                (payments.c.member_id == int(member_id)) &
+                (payments.c.year == int(year)) & (payments.c.month == int(month))
+            )).scalars().all()
+            remainder = max(0, int(mark['amount']) - sum(old))
+            if remainder:
+                conn.execute(insert(payments).values(
+                    member_id=int(member_id), year=int(year), month=int(month),
+                    amount=remainder, paid_on=paid_on, origin='foto_confirmada',
+                    note='Fotografia conferida pelo financeiro; data histórica não conhecida'
+                    if paid_on is None else 'Marca da fotografia confirmada pelo financeiro',
+                ))
+        conn.execute(update(photo_marks).where(photo_marks.c.id == mark['id']).values(
+            status='confirmada' if confirmed else 'rejeitada'))
+
+
+def create_full_month_payment(engine, member_id, year, month, fee, paid_on=None):
+    """Marca como pago sem duplicar montantes preexistentes nem sobrepagamentos."""
+    year, month, fee = int(year), int(month), int(fee)
+    if fee <= 0 or not 1 <= month <= 12:
+        raise ValueError('Dados de pagamento inválidos')
+    with engine.begin() as conn:
+        past = conn.execute(select(payments.c.amount).where(
+            (payments.c.member_id == int(member_id)) & (payments.c.year == year) &
+            (payments.c.month == month))).scalars().all()
+        remainder = max(0, fee - sum(past))
+        if remainder:
+            conn.execute(insert(payments).values(
+                member_id=int(member_id), year=year, month=month, amount=remainder,
+                paid_on=paid_on, origin='grelha_manual',
+                note=('Regularização de marca histórica; dia exato não conhecido' if paid_on is None
+                      else 'Mensalidade assinalada na grelha pelo financeiro'),
+            ))
+        conn.execute(update(photo_marks).where(
+            (photo_marks.c.member_id == int(member_id)) & (photo_marks.c.year == year) &
+            (photo_marks.c.month == month) & (photo_marks.c.status == 'pendente')
+        ).values(status='confirmada'))
+    return remainder
+
+
+def update_payment(engine, payment_id, member_id, year, month, amount, paid_on, note):
+    """Corrige um recebimento existente sem perder o identificador do lançamento."""
+    if amount <= 0 or not 1 <= int(month) <= 12 or int(year) < 2020:
+        raise ValueError('Confirma o valor, mês e ano')
+    with engine.begin() as conn:
+        row = conn.execute(select(payments).where(payments.c.id == int(payment_id))).first()
+        if not row:
+            raise ValueError('Pagamento não encontrado')
+        conn.execute(update(payments).where(payments.c.id == int(payment_id)).values(
+            member_id=int(member_id), year=int(year), month=int(month), amount=int(amount),
+            paid_on=paid_on, note=note.strip(), origin='corrigido_pelo_financeiro',
+        ))
+        conn.execute(insert(audit_log).values(event='CORRIGIR_MENSALIDADE',
+                    details=f'id={payment_id}; anterior={dict(row._mapping)}; novo={member_id}/{year}/{month}/{amount}/{paid_on}'[:500]))
 
 
 def session_times(session_on):
@@ -347,3 +495,90 @@ def remove_attendance(engine, attendance_id):
         if row['fine_paid']:
             raise ValueError('Já existe uma multa paga. Não é possível apagar um recebimento sem regularizar as contas.')
         conn.execute(delete(attendance).where(attendance.c.id == int(attendance_id)))
+
+
+# -------------------------- Aluguer do pavilhão --------------------------
+def get_rent_plan(engine, year):
+    with engine.connect() as conn:
+        row = conn.execute(select(rent_plans).where(rent_plans.c.year == int(year))).mappings().first()
+    return dict(row) if row else {'year': int(year), 'monthly_rent': 0, 'note': ''}
+
+
+def set_rent_plan(engine, year, monthly_rent, note=''):
+    if not 2020 <= int(year) <= 2100 or int(monthly_rent) < 0:
+        raise ValueError('Ano ou montante de aluguer inválido')
+    with engine.begin() as conn:
+        old = conn.execute(select(rent_plans).where(rent_plans.c.year == int(year))).mappings().first()
+        if old:
+            conn.execute(update(rent_plans).where(rent_plans.c.year == int(year)).values(
+                monthly_rent=int(monthly_rent), note=note.strip()))
+        else:
+            conn.execute(insert(rent_plans).values(year=int(year), monthly_rent=int(monthly_rent), note=note.strip()))
+        conn.execute(insert(audit_log).values(event='ATUALIZAR_PLANO_ALUGUER',
+                    details=f'ano={year}; anterior={dict(old) if old else None}; mensal={monthly_rent}'))
+
+
+def add_rent_payment(engine, year, month, amount, paid_on, note=''):
+    if not 1 <= int(month) <= 12 or not 2020 <= int(year) <= 2100 or int(amount) <= 0:
+        raise ValueError('Confirma o mês, ano e montante do aluguer')
+    if paid_on > date.today():
+        raise ValueError('A data de pagamento não pode ser futura')
+    with engine.begin() as conn:
+        conn.execute(insert(rent_payments).values(year=int(year), month=int(month), amount=int(amount),
+                      paid_on=paid_on, note=note.strip()))
+
+
+def rent_grid(year, expected, rent_rows, today=None):
+    today = today or date.today()
+    rows = []
+    for month in range(1, 13):
+        paid = sum(int(r['amount']) for r in rent_rows
+                   if int(r['year']) == int(year) and int(r['month']) == month)
+        due = int(expected)
+        future = date(int(year), month, 1) > today
+        status = ('Não configurado' if due == 0 else '✓ Pago' if paid >= due
+                  else '◐ Parcial' if paid else 'A vencer' if future else '· Por pagar')
+        rows.append({'Mês': month, 'Previsto': due, 'Pago': paid,
+                     'Em falta': max(due - paid, 0) if not future else 0,
+                     'Estado': status})
+    return rows
+
+
+def set_member_month_status(engine, member_id, year, month, should_be_paid, fee,
+                            paid_on=None, allow_undo=False):
+    """Assinala/desfaz quota: nunca duplica; anulação exige confirmação no ecrã.
+
+    Montante parcial não é apagado ao desmarcar sem autorização explícita.
+    """
+    member_id, year, month, fee = int(member_id), int(year), int(month), int(fee)
+    if fee <= 0 or not 1 <= month <= 12:
+        raise ValueError('Parâmetros de mensalidade inválidos')
+    with engine.begin() as conn:
+        current = conn.execute(select(payments).where((payments.c.member_id == member_id) &
+            (payments.c.year == year) & (payments.c.month == month))).mappings().all()
+        total = sum(int(r['amount']) for r in current)
+        photo = conn.execute(select(photo_marks).where((photo_marks.c.member_id == member_id) &
+            (photo_marks.c.year == year) & (photo_marks.c.month == month))).mappings().first()
+        if should_be_paid:
+            delta = max(fee - total, 0)
+            if delta:
+                conn.execute(insert(payments).values(member_id=member_id, year=year, month=month,
+                    amount=delta, paid_on=paid_on, origin='validacao_financeiro',
+                    note='Mensalidade confirmada pelo financeiro; dia histórico desconhecido' if paid_on is None
+                    else 'Mensalidade marcada na grelha pelo financeiro'))
+            if photo and photo['status'] == 'pendente':
+                conn.execute(update(photo_marks).where(photo_marks.c.id == photo['id']).values(status='confirmada'))
+            if delta:
+                conn.execute(insert(audit_log).values(event='CONFIRMAR_MENSALIDADE',
+                    details=f'membro={member_id}; {year}-{month:02d}; recebido={delta}; data={paid_on}'))
+            return delta
+        if total:
+            if not allow_undo:
+                raise ValueError('Para retirar um pagamento existente confirma a anulação na interface')
+            conn.execute(delete(payments).where((payments.c.member_id == member_id) &
+                (payments.c.year == year) & (payments.c.month == month)))
+            conn.execute(insert(audit_log).values(event='ANULAR_MENSALIDADE',
+                details=f'membro={member_id}; {year}-{month:02d}; lançamentos={[(r["id"],r["amount"]) for r in current]}'[:500]))
+        if photo and photo['status'] != 'rejeitada':
+            conn.execute(update(photo_marks).where(photo_marks.c.id == photo['id']).values(status='rejeitada'))
+        return -total
