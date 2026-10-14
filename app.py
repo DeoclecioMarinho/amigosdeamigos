@@ -13,6 +13,21 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+# Proteção contra a publicação de ficheiros de versões diferentes no GitHub.
+# Esta verificação ocorre antes das importações das funções específicas.
+try:
+    import database as _db_module
+    import finance as _finance_module
+except ImportError:
+    st.error('Não foi possível carregar os módulos da aplicação. Confirma os ficheiros e requirements.txt no GitHub.')
+    st.stop()
+
+if (getattr(_db_module, 'APP_COMPAT_VERSION', None) != '4.1'
+        or getattr(_finance_module, 'APP_COMPAT_VERSION', None) != '4.1'):
+    st.error('Ficheiros de versões diferentes detetados: atualiza app.py, database.py e finance.py em conjunto no mesmo repositório.')
+    st.info('Não apagues a base de dados nem os registos de pagamentos. Substitui apenas o código e reinicia a aplicação.')
+    st.stop()
+
 from database import (
     add_expense, add_income, add_member, add_payment, change_member, csv_export,
     delete_record, get_rows, get_year_settings, import_photo_payments, init_db,

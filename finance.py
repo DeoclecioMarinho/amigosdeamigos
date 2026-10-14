@@ -1,5 +1,7 @@
 """Contabilidade do grupo: quotas mensais + multas de chegada tardia aos treinos."""
 from __future__ import annotations
+
+APP_COMPAT_VERSION = '4.1'
 from datetime import date
 from collections import defaultdict
 import pandas as pd
